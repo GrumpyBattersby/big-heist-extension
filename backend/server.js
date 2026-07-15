@@ -94,6 +94,27 @@ app.post('/api/push-data', (req, res) => {
 });
 
 // ============================
+// DELETE DATA - called when a perp's status is reset (e.g. Debug - Remove Perp Status),
+// so the panel doesn't keep showing stale data for someone who's no longer a perp
+// ============================
+app.post('/api/delete-data', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const { userId } = req.body;
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
+    delete store[userId];
+    saveStore();
+
+    res.json({ success: true });
+});
+
+// ============================
 // MY DATA - called by the Extension frontend, authenticated via Twitch's own signed token.
 // Twitch signs a JWT and hands it to the Extension automatically when it loads - we just
 // verify it came from Twitch (using our Extension Secret) and trust the userId inside it.
