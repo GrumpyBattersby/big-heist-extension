@@ -120,6 +120,11 @@ app.post('/api/delete-data', (req, res) => {
 // verify it came from Twitch (using our Extension Secret) and trust the userId inside it.
 // ============================
 app.get('/api/my-data', (req, res) => {
+    // This endpoint is per-viewer and personalized - caching it (whether by the browser,
+    // Twitch's CDN, or any proxy in between) would serve one viewer's data to another,
+    // or stale data after an update. Always disallow caching here.
+    res.set('Cache-Control', 'no-store');
+
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Missing authorization token' });
@@ -154,6 +159,7 @@ app.get('/api/my-data', (req, res) => {
 
     res.json({
         found: true,
+        userId: decoded.user_id,
         name: perpData.name,
         inventory: perpData.inventory,
         skills: perpData.skills,
