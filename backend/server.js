@@ -1,177 +1,135 @@
-// Big Heist Extension Backend
-//
-// What this does:
-// 1. Streamer.bot pushes each perp's current inventory/skills here whenever they change
-//    (POST /api/push-data, secured with a shared secret only you and Streamer.bot know)
-// 2. The Extension panel (running in each viewer's browser on Twitch) asks this server
-//    for THEIR OWN data (GET /api/my-data), proving who they are via a signed token
-//    that Twitch itself provides - nobody can ask for someone else's data.
-//
-// REQUIRED ENVIRONMENT VARIABLES (set these in Render's dashboard, never in this file):
-//   PUSH_SECRET   - a password you make up, shared between this server and your Streamer.bot script
-//   EXT_SECRET    - your Extension's own secret, found in the Twitch Developer Console under
-//                   your Extension > Settings > "Secret" (this is base64-encoded already, use it as-is)
-//
-// Data is stored in memory and backed up to a local JSON file. On Render's free tier this file
-// may not survive a restart - that's fine, Streamer.bot will just push fresh data again next time
-// something changes, so the store repopulates itself naturally within moments of the stream starting.
+using System;
+using System.Net.Http;
+using System.Text;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
 
-const express = require('express');
-const jwt = require('jsonwebtoken');
-const cors = require('cors');
-const fs = require('fs');
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
-const PUSH_SECRET = process.env.PUSH_SECRET;
-const EXT_SECRET = process.env.EXT_SECRET;
-const DATA_FILE = './perp-data-store.json';
-
-if (!PUSH_SECRET || !EXT_SECRET) {
-    console.error('FATAL: PUSH_SECRET and EXT_SECRET must both be set as environment variables.');
-    process.exit(1);
-}
-
-// ============================
-// LOAD/SAVE the simple JSON-backed store
-// ============================
-let store = {};
-try {
-    if (fs.existsSync(DATA_FILE)) {
-        store = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    }
-} catch (err) {
-    console.warn('Could not load existing data file, starting fresh:', err.message);
-}
-
-function saveStore() {
-    try {
-        fs.writeFileSync(DATA_FILE, JSON.stringify(store), 'utf8');
-    } catch (err) {
-        console.warn('Could not save data file:', err.message);
-    }
-}
-
-// ============================
-// HEALTH CHECK - useful for confirming the service is alive, and for uptime pings
-// to keep Render's free tier from sleeping if you want to try that
-// ============================
-app.get('/api/status', (req, res) => {
-    res.json({ status: 'ok', perpsStored: Object.keys(store).length });
-});
-
-// ============================
-// PUSH DATA - called by Streamer.bot whenever a perp's inventory or skills change
-// ============================
-app.post('/api/push-data', (req, res) => {
-    const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
-        return res.status(401).json({ error: 'Invalid push secret' });
-    }
-
-    const { userId, name, inventory, skills, lastCrime, crimeStatus, achievements, pendingMugshotPick } = req.body;
-
-    if (!userId) {
-        return res.status(400).json({ error: 'userId is required' });
-    }
-
-    store[userId] = {
-        name: name || userId,
-        inventory: inventory || {},
-        skills: skills || {},
-        lastCrime: lastCrime || '',
-        crimeStatus: crimeStatus || 'CITIZEN',
-        achievements: achievements || [],
-        pendingMugshotPick: !!pendingMugshotPick,
-        updatedAt: new Date().toISOString()
+public class CPHInline
+{
+    private static readonly string[] SkillNames = {
+        "Forger", "Demolitions", "Driver", "Medic", "Muscle", "Hacker", "Surveillance",
+        "Mastermind", "Negotiator", "Bluff", "Safecracking", "SmallWeapons",
+        "LargeWeapons", "Disguise", "Acrobatics", "Pickpocket", "Robbery",
+        "Investigation", "Capture"
     };
 
-    saveStore();
+    private static readonly HttpClient httpClient = new HttpClient();
 
-    res.json({ success: true });
-});
+    public bool Execute()
+    {
+        // ============================
+        // CONFIGURE THESE TWO VALUES
+        // ============================
+        string backendUrl = "https://big-heist-backend.onrender.com";
+        string pushSecret = "heist-secret-7f3k9x2m";
 
-// ============================
-// DELETE DATA - called when a perp's status is reset (e.g. Debug - Remove Perp Status),
-// so the panel doesn't keep showing stale data for someone who's no longer a perp
-// ============================
-app.post('/api/delete-data', (req, res) => {
-    const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
-        return res.status(401).json({ error: 'Invalid push secret' });
+        CPH.TryGetArg("userId", out string userId);
+        if (string.IsNullOrEmpty(userId)) return true;
+
+        try
+        {
+            // Gather current name, inventory, and skills fresh from persisted vars
+            string perpJson = CPH.GetGlobalVar<string>("PerpData");
+            var perps = string.IsNullOrEmpty(perpJson)
+                ? new Dictionary<string, Dictionary<string, object>>()
+                : JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, object>>>(perpJson);
+
+            string name = perps.ContainsKey(userId) && perps[userId].ContainsKey("name")
+                ? perps[userId]["name"].ToString() : userId;
+
+            string lastCrime = "";
+            if (perps.ContainsKey(userId) && perps[userId].ContainsKey("criminalRecord"))
+            {
+                var record = JsonConvert.DeserializeObject<List<string>>(perps[userId]["criminalRecord"].ToString());
+                if (record != null && record.Count > 0) lastCrime = record[record.Count - 1];
+            }
+
+            // Matches Heist - Update PerpCard's exact priority logic: an active jail sentence
+            // (tracked separately in ActiveBigHeistCubes) overrides crimeStatus entirely
+            string crimeStatus = "CITIZEN";
+            string cubesJson = CPH.GetGlobalVar<string>("ActiveBigHeistCubes");
+            var cubes = string.IsNullOrEmpty(cubesJson)
+                ? new Dictionary<string, long>()
+                : JsonConvert.DeserializeObject<Dictionary<string, long>>(cubesJson);
+
+            if (cubes.ContainsKey(userId) && cubes[userId] > 0)
+            {
+                long minutesLeft = cubes[userId] / 60;
+                crimeStatus = "ISOCUBE #" + minutesLeft;
+            }
+            else
+            {
+                string rawCrimeStatus = CPH.GetTwitchUserVarById<string>(userId, "crimeStatus", true);
+                if (!string.IsNullOrEmpty(rawCrimeStatus)) crimeStatus = rawCrimeStatus;
+            }
+
+            string achievementsJson = CPH.GetTwitchUserVarById<string>(userId, "achievements", true);
+            var achievementsRaw = string.IsNullOrEmpty(achievementsJson)
+                ? new Dictionary<string, object>()
+                : JsonConvert.DeserializeObject<Dictionary<string, object>>(achievementsJson);
+            var unlockedAchievements = new List<string>();
+            foreach (var kv in achievementsRaw)
+            {
+                if (kv.Value is bool && (bool)kv.Value) unlockedAchievements.Add(kv.Key);
+                else if (kv.Value.ToString().Equals("true", StringComparison.OrdinalIgnoreCase)) unlockedAchievements.Add(kv.Key);
+            }
+
+            string pendingPickStr = CPH.GetTwitchUserVarById<string>(userId, "pendingMugshotPick", true);
+            bool pendingMugshotPick = pendingPickStr != null && pendingPickStr.Equals("true", StringComparison.OrdinalIgnoreCase);
+
+            string invJson = CPH.GetTwitchUserVarById<string>(userId, "heist_inventory", true);
+            var inventory = string.IsNullOrEmpty(invJson)
+                ? new Dictionary<string, int>()
+                : JsonConvert.DeserializeObject<Dictionary<string, int>>(invJson);
+
+            var skills = new Dictionary<string, int>();
+            foreach (string skill in SkillNames)
+            {
+                int val = CPH.GetTwitchUserVarById<int>(userId, "skill_" + skill, true);
+                if (val > 0) skills[skill] = val;
+            }
+
+            var payload = new
+            {
+                userId = userId,
+                name = name,
+                inventory = inventory,
+                skills = skills,
+                lastCrime = lastCrime,
+                crimeStatus = crimeStatus,
+                achievements = unlockedAchievements,
+                pendingMugshotPick = pendingMugshotPick
+            };
+
+            string json = JsonConvert.SerializeObject(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var request = new HttpRequestMessage(HttpMethod.Post, backendUrl + "/api/push-data");
+            request.Headers.Add("X-Push-Secret", pushSecret);
+            request.Content = content;
+
+            // Blocks briefly until the request actually completes - a "fire and forget" Task.Run here
+            // risked being abandoned before it finished, since Streamer.bot's script execution context
+            // doesn't guarantee background tasks survive after Execute() returns.
+            try
+            {
+                var response = httpClient.SendAsync(request).GetAwaiter().GetResult();
+                if (!response.IsSuccessStatusCode)
+                {
+                    CPH.LogWarn("Sync to Extension: backend responded with " + response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                CPH.LogWarn("Sync to Extension failed: " + ex.Message);
+            }
+        }
+        catch (Exception ex)
+        {
+            CPH.LogWarn("Sync to Extension failed to build payload: " + ex.Message);
+        }
+
+        return true;
     }
-
-    const { userId } = req.body;
-    if (!userId) {
-        return res.status(400).json({ error: 'userId is required' });
-    }
-
-    delete store[userId];
-    saveStore();
-
-    res.json({ success: true });
-});
-
-// ============================
-// MY DATA - called by the Extension frontend, authenticated via Twitch's own signed token.
-// Twitch signs a JWT and hands it to the Extension automatically when it loads - we just
-// verify it came from Twitch (using our Extension Secret) and trust the userId inside it.
-// ============================
-app.get('/api/my-data', (req, res) => {
-    // This endpoint is per-viewer and personalized - caching it (whether by the browser,
-    // Twitch's CDN, or any proxy in between) would serve one viewer's data to another,
-    // or stale data after an update. Always disallow caching here.
-    res.set('Cache-Control', 'no-store');
-
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Missing authorization token' });
-    }
-
-    const token = authHeader.substring(7);
-    let decoded;
-    try {
-        decoded = jwt.verify(token, Buffer.from(EXT_SECRET, 'base64'), { algorithms: ['HS256'] });
-    } catch (err) {
-        return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-
-    // decoded.user_id is only present if the viewer has granted "share your Twitch user ID"
-    // permission to the Extension - without it we only get an opaque, per-extension ID that
-    // won't match the real Twitch userId Streamer.bot uses, so we have to ask for it explicitly.
-    if (!decoded.user_id) {
-        return res.status(403).json({
-            error: 'identity_not_shared',
-            message: 'Please share your Twitch identity with this Extension to see your inventory.'
-        });
-    }
-
-    const perpData = store[decoded.user_id];
-
-    if (!perpData) {
-        return res.json({
-            found: false,
-            message: "No perp data found yet - have you run !becomeperp on stream?"
-        });
-    }
-
-    res.json({
-        found: true,
-        userId: decoded.user_id,
-        name: perpData.name,
-        inventory: perpData.inventory,
-        skills: perpData.skills,
-        lastCrime: perpData.lastCrime,
-        crimeStatus: perpData.crimeStatus,
-        achievements: perpData.achievements,
-        pendingMugshotPick: perpData.pendingMugshotPick || false,
-        updatedAt: perpData.updatedAt
-    });
-});
-
-app.listen(PORT, () => {
-    console.log('Big Heist Extension backend running on port ' + PORT);
-});
+}
