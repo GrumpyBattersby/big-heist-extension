@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mega-City One Police Terminal</title>
+<script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&display=swap');
+
+    * { box-sizing: border-box; }
+
+    body {
+        margin: 0;
+        padding: 10px;
+        background: #0b1e2d;
+        color: #eaf6ff;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+    }
+
+    .terminal {
+        border: 4px solid #f5c518;
+        border-radius: 6px;
+        background: linear-gradient(180deg, #103049 0%, #0b2338 100%);
+        overflow: hidden;
+        position: relative;
+    }
+
+    .hazard-strip {
+        height: 10px;
+        background: repeating-linear-gradient(
+            45deg,
+            #f5c518, #f5c518 10px,
+            #1a1a1a 10px, #1a1a1a 20px
+        );
+    }
+
+    .header {
+        background: linear-gradient(180deg, #c0362c 0%, #8f241c 100%);
+        color: #fff2c9;
+        text-align: center;
+        padding: 8px 6px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border-bottom: 3px solid #f5c518;
+    }
+
+    .body-content {
+        padding: 10px 12px;
+    }
+
+    .top-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+    }
+
+    .mugshot-frame {
+        width: 70px;
+        height: 70px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+    .mugshot-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .mugshot-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        color: #5a7a8f;
+        text-align: center;
+    }
+
+    .name-row {
+        font-size: 16px;
+        font-weight: 700;
+        color: #f5c518;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+    .status-citizen { background: #f5c518; color: #1a1a1a; }
+    .status-wanted { background: #c0362c; color: #fff; }
+
+    .section-title {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 1px;
+        color: #7fd6ff;
+        border-bottom: 2px solid #1e4a63;
+        margin-top: 10px;
+        margin-bottom: 5px;
+        padding-bottom: 3px;
+    }
+
+    .skills-text, .items-text {
+        font-size: 12px;
+        line-height: 1.6;
+        color: #dceeff;
+    }
+
+    .skill-name { color: #eaf6ff; }
+    .skill-num { color: #7fd858; font-weight: 700; }
+
+    .last-crime-box {
+        background: #0b2338;
+        border: 1px solid #1e4a63;
+        border-radius: 4px;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-style: italic;
+        color: #b8d8ec;
+        margin-top: 4px;
+    }
+
+    .achievements-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .achievement-badge {
+        background: #1e4a63;
+        border: 2px solid #f5c518;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 700;
+        color: #f5c518;
+    }
+
+    #status-message {
+        color: #a0c4d8;
+        font-style: italic;
+        padding: 16px 10px;
+        text-align: center;
+    }
+
+    button {
+        background: #c0362c;
+        color: #fff2c9;
+        border: 2px solid #f5c518;
+        padding: 8px 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: 'Oswald', sans-serif;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+    }
+    button:hover { background: #8f241c; }
+</style>
+</head>
+<body>
+
+<div class="terminal">
+    <div class="hazard-strip"></div>
+    <div class="header">Mega-City One Police Terminal</div>
+    <div class="body-content" id="content">
+        <div id="status-message">Loading...</div>
+    </div>
+    <div class="hazard-strip"></div>
+</div>
+
+<script>
+    const BACKEND_URL = "https://YOUR-RENDER-URL-HERE.onrender.com"; // <-- update after deploying Step 1
+    // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
+    // Format: https://YOUR-USERNAME.github.io/YOUR-REPO/mugshots/{userId}-b.png
+    const MUGSHOT_BASE_URL = "https://YOUR-USERNAME.github.io/YOUR-REPO/mugshots"; // <-- update after GitHub Pages setup
+
+    let authToken = null;
+    let currentUserId = null;
+
+    Twitch.ext.onAuthorized(function (auth) {
+        authToken = auth.token;
+        currentUserId = auth.userId; // present once identity is shared
+        fetchMyData();
+    });
+
+    setInterval(function () {
+        if (authToken) fetchMyData();
+    }, 15000);
+
+    function fetchMyData() {
+        fetch(BACKEND_URL + "/api/my-data", {
+            headers: { "Authorization": "Bearer " + authToken }
+        })
+        .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
+        .then(function (result) {
+            if (result.status === 403 && result.data.error === "identity_not_shared") {
+                showShareIdentityPrompt();
+                return;
+            }
+            if (result.status === 401) {
+                document.getElementById("content").innerHTML =
+                    '<div id="status-message">Could not verify your identity - try reloading.</div>';
+                return;
+            }
+            if (!result.data.found) {
+                document.getElementById("content").innerHTML =
+                    '<div id="status-message">' + result.data.message + '</div>';
+                return;
+            }
+            renderPerpSheet(result.data);
+        })
+        .catch(function (err) {
+            document.getElementById("content").innerHTML =
+                '<div id="status-message">Could not reach the server - try again shortly.</div>';
+        });
+    }
+
+    function showShareIdentityPrompt() {
+        document.getElementById("content").innerHTML =
+            '<div id="status-message">Share your Twitch identity to see your file.</div>' +
+            '<div style="text-align:center; margin-top:8px;"><button id="share-btn">Share My Identity</button></div>';
+        document.getElementById("share-btn").addEventListener("click", function () {
+            Twitch.ext.actions.requestIdShare();
+        });
+    }
+
+    function renderPerpSheet(data) {
+        const status = (data.crimeStatus || "CITIZEN").toUpperCase();
+        const statusClass = status === "CITIZEN" ? "status-citizen" : "status-wanted";
+
+        const mugshotUrl = currentUserId ? MUGSHOT_BASE_URL + "/" + currentUserId + "-b.png" : null;
+
+        let html = '<div class="top-row">';
+        html += '<div class="mugshot-frame">';
+        if (mugshotUrl) {
+            // onerror falls back to a placeholder if this specific perp has no mugshot uploaded yet
+            html += '<img src="' + mugshotUrl + '" onerror="this.parentElement.innerHTML=\'<div class=&quot;mugshot-placeholder&quot;>No Photo</div>\'">';
+        } else {
+            html += '<div class="mugshot-placeholder">No Photo</div>';
+        }
+        html += '</div>';
+        html += '<div>';
+        html += '<div class="name-row">' + escapeHtml(data.name) + '</div>';
+        html += '<div class="status-badge ' + statusClass + '">' + escapeHtml(status) + '</div>';
+        html += '</div>';
+        html += '</div>';
+
+        html += '<div class="section-title">Skills</div>';
+        const skillKeys = Object.keys(data.skills || {}).sort();
+        if (skillKeys.length === 0) {
+            html += '<div class="skills-text">No trained skills yet.</div>';
+        } else {
+            const skillParts = skillKeys.map(function (s) {
+                return '<span class="skill-name">' + humanize(s) + ':</span> <span class="skill-num">' + data.skills[s] + '</span>';
+            });
+            html += '<div class="skills-text">' + skillParts.join(', ') + '</div>';
+        }
+
+        html += '<div class="section-title">Items</div>';
+        const itemKeys = Object.keys(data.inventory || {}).filter(function (k) { return data.inventory[k] > 0; });
+        if (itemKeys.length === 0) {
+            html += '<div class="items-text">Empty.</div>';
+        } else {
+            const itemParts = itemKeys.map(function (k) {
+                return humanizeItemKey(k) + ' x' + data.inventory[k];
+            });
+            html += '<div class="items-text">' + itemParts.join(', ') + '</div>';
+        }
+
+        html += '<div class="section-title">Last Crime</div>';
+        html += '<div class="last-crime-box">' + (data.lastCrime ? escapeHtml(data.lastCrime) : 'No record on file.') + '</div>';
+
+        if (data.achievements && data.achievements.length > 0) {
+            html += '<div class="section-title">Achievements</div>';
+            html += '<div class="achievements-row">';
+            data.achievements.forEach(function (a) {
+                html += '<div class="achievement-badge" title="' + escapeHtml(humanize(a)) + '">' +
+                    escapeHtml(a.charAt(0)) + '</div>';
+            });
+            html += '</div>';
+        }
+
+        document.getElementById("content").innerHTML = html;
+    }
+
+    function humanize(s) {
+        if (!s) return s;
+        return s.charAt(0).toUpperCase() + s.slice(1).replace(/([a-z])([A-Z])/g, '$1 $2');
+    }
+
+    function humanizeItemKey(fullKey) {
+        const parenIndex = fullKey.indexOf(" (");
+        if (parenIndex > 0) {
+            return humanize(fullKey.substring(0, parenIndex)) + fullKey.substring(parenIndex);
+        }
+        return humanize(fullKey);
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+</script>
+
+</body>
+</html>
