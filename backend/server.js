@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, inventory, skills, lastCrime, crimeStatus, achievements } = req.body;
+    const { userId, name, inventory, skills, lastCrime, crimeStatus, achievements, pendingMugshotPick } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -85,6 +85,7 @@ app.post('/api/push-data', (req, res) => {
         lastCrime: lastCrime || '',
         crimeStatus: crimeStatus || 'CITIZEN',
         achievements: achievements || [],
+        pendingMugshotPick: !!pendingMugshotPick,
         updatedAt: new Date().toISOString()
     };
 
@@ -166,6 +167,7 @@ app.get('/api/my-data', (req, res) => {
         lastCrime: perpData.lastCrime,
         crimeStatus: perpData.crimeStatus,
         achievements: perpData.achievements,
+        pendingMugshotPick: perpData.pendingMugshotPick || false,
         updatedAt: perpData.updatedAt
     });
 });
