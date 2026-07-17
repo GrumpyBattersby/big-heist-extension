@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, mugshotVersion } = req.body;
+    const { userId, name, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -89,6 +89,11 @@ app.post('/api/push-data', (req, res) => {
         cubeReleaseAt: cubeReleaseAt || null,
         achievements: achievements || [],
         pendingMugshotPick: !!pendingMugshotPick,
+        // Ground-truth SHA-256 hashes of each candidate's actual file bytes, computed by
+        // Become Perp at upload time - lets the panel verify a fetched image is genuinely
+        // correct rather than trusting a bare 200 OK from GitHub Pages, whose CDN can serve
+        // stale-but-successful responses for a while after a real upload/delete.
+        candidateHashes: candidateHashes || [],
         mugshotVersion: mugshotVersion || '0',
         updatedAt: new Date().toISOString()
     };
@@ -173,6 +178,7 @@ app.get('/api/my-data', (req, res) => {
         cubeReleaseAt: perpData.cubeReleaseAt || null,
         achievements: perpData.achievements,
         pendingMugshotPick: perpData.pendingMugshotPick || false,
+        candidateHashes: perpData.candidateHashes || [],
         mugshotVersion: perpData.mugshotVersion || '0',
         updatedAt: perpData.updatedAt
     });
