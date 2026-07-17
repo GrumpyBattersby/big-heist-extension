@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -103,6 +103,7 @@ app.post('/api/push-data', (req, res) => {
         // item info) - the frontend shows this instead of the normal character sheet while it's
         // present; Sync To Extension only ever sends a non-null value if it hasn't expired yet.
         panelOverride: panelOverride || null,
+        pickpocketedTargets: pickpocketedTargets || [],
         updatedAt: new Date().toISOString()
     };
 
@@ -191,6 +192,8 @@ app.get('/api/my-data', (req, res) => {
         mugshotVersion: perpData.mugshotVersion || '0',
         mugshotHash: perpData.mugshotHash || '',
         panelOverride: perpData.panelOverride || null,
+        pickpocketedTargets: perpData.pickpocketedTargets || [],
+        presentViewers: presentViewers,
         updatedAt: perpData.updatedAt
     });
 });
@@ -209,6 +212,26 @@ app.get('/api/my-data', (req, res) => {
 // ============================
 let pendingActions = [];
 let nextActionId = 1;
+
+// ============================
+// PRESENT VIEWERS - pushed periodically by Big Heist - Track Present Viewers (bound to
+// Streamer.bot's own Present Viewers trigger), used for things like a Pickpocket target picker
+// in the panel - shows everyone actually present in chat right now (including logged-in
+// lurkers who haven't typed anything), not just people who've recently spoken.
+// ============================
+let presentViewers = [];
+
+app.post('/api/push-present-viewers', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const { viewers } = req.body;
+    presentViewers = Array.isArray(viewers) ? viewers : [];
+
+    res.json({ success: true });
+});
 
 // Called by the PANEL (authenticated the same way as /api/my-data - Twitch's own signed token,
 // so nobody can queue an action pretending to be someone else).
