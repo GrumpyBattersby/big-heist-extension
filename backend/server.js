@@ -195,6 +195,76 @@ app.get('/api/my-data', (req, res) => {
     });
 });
 
+// ============================
+// PANEL ACTION QUEUE - lets the Extension panel trigger real Streamer.bot actions (buying an
+// item, clearing the shop view, opening the shop) WITHOUT the player typing a chat command.
+// Streamer.bot has no way to be "called into" directly (it runs on the streamer's own PC, not a
+// public server), so this works as a queue instead: the panel POSTs an action here, and a new
+// Streamer.bot action polls GET /api/pending-actions every few seconds (via a Timer trigger) to
+// pick up and actually execute anything queued. This means a few seconds of delay between a
+// click and it actually happening, but nothing needs to be exposed to the internet beyond this
+// already-trusted backend.
+// In-memory only (not persisted to the JSON backup file) - these are meant to be picked up
+// within seconds, so surviving a restart isn't a concern the way the main perp store is.
+// ============================
+let pendingActions = [];
+let nextActionId = 1;
+
+// Called by the PANEL (authenticated the same way as /api/my-data - Twitch's own signed token,
+// so nobody can queue an action pretending to be someone else).
+app.post('/api/queue-action', (req, res) => {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing authorization token' });
+    }
+
+    const token = authHeader.substring(7);
+    let decoded;
+    try {
+        decoded = jwt.verify(token, Buffer.from(EXT_SECRET, 'base64'), { algorithms: ['HS256'] });
+    } catch (err) {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    if (!decoded.user_id) {
+        return res.status(403).json({
+            error: 'identity_not_shared',
+            message: 'Please share your Twitch identity with this Extension to do that.'
+        });
+    }
+
+    const { type, payload } = req.body;
+    if (!type) {
+        return res.status(400).json({ error: 'type is required' });
+    }
+
+    pendingActions.push({
+        id: nextActionId++,
+        userId: decoded.user_id,
+        type: type,
+        payload: payload || {},
+        queuedAt: new Date().toISOString()
+    });
+
+    res.json({ success: true });
+});
+
+// Called by Streamer.bot's Timer-triggered poller - authenticated with the same push secret as
+// the other Streamer.bot-only endpoints. Pops (returns AND clears) everything queued so far in
+// one atomic step, rather than a separate get-then-acknowledge pair - simpler, and avoids any
+// risk of the same action being picked up twice if a separate "ack" call ever failed partway.
+app.get('/api/pending-actions', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const actions = pendingActions;
+    pendingActions = [];
+
+    res.json({ actions: actions });
+});
+
 app.listen(PORT, () => {
     console.log('Big Heist Extension backend running on port ' + PORT);
 });
