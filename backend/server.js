@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion } = req.body;
+    const { userId, name, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -95,6 +95,9 @@ app.post('/api/push-data', (req, res) => {
         // stale-but-successful responses for a while after a real upload/delete.
         candidateHashes: candidateHashes || [],
         mugshotVersion: mugshotVersion || '0',
+        // Same ground-truth verification, but for the final claimed mugshot - computed by
+        // Pick Mugshot at claim time.
+        mugshotHash: mugshotHash || '',
         updatedAt: new Date().toISOString()
     };
 
@@ -180,6 +183,7 @@ app.get('/api/my-data', (req, res) => {
         pendingMugshotPick: perpData.pendingMugshotPick || false,
         candidateHashes: perpData.candidateHashes || [],
         mugshotVersion: perpData.mugshotVersion || '0',
+        mugshotHash: perpData.mugshotHash || '',
         updatedAt: perpData.updatedAt
     });
 });
