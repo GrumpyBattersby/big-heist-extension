@@ -194,6 +194,7 @@ app.get('/api/my-data', (req, res) => {
         panelOverride: perpData.panelOverride || null,
         pickpocketedTargets: perpData.pickpocketedTargets || [],
         presentViewers: presentViewers,
+        shopListing: shopListing,
         updatedAt: perpData.updatedAt
     });
 });
@@ -229,6 +230,27 @@ app.post('/api/push-present-viewers', (req, res) => {
 
     const { viewers } = req.body;
     presentViewers = Array.isArray(viewers) ? viewers : [];
+
+    res.json({ success: true });
+});
+
+// ============================
+// SHOP LISTING - pushed passively by Rotation Script whenever the shop restocks (once a stream,
+// typically), so the panel can show it INSTANTLY as a client-side toggle - no round-trip needed
+// just to browse, since this only changes when a restock happens. Buying still goes through the
+// normal action queue, which re-validates everything fresh at the actual moment of purchase -
+// this is only ever a display convenience, never trusted for the real transaction.
+// ============================
+let shopListing = [];
+
+app.post('/api/push-shop-listing', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const { items } = req.body;
+    shopListing = Array.isArray(items) ? items : [];
 
     res.json({ success: true });
 });
