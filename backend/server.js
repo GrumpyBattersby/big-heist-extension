@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -80,6 +80,7 @@ app.post('/api/push-data', (req, res) => {
 
     store[userId] = {
         name: name || userId,
+        points: points || 0,
         inventory: inventory || {},
         skills: skills || {},
         lastCrime: lastCrime || '',
@@ -174,6 +175,7 @@ app.get('/api/my-data', (req, res) => {
         found: true,
         userId: decoded.user_id,
         name: perpData.name,
+        points: perpData.points || 0,
         inventory: perpData.inventory,
         skills: perpData.skills,
         lastCrime: perpData.lastCrime,
