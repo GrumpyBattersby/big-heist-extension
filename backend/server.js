@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -99,6 +99,10 @@ app.post('/api/push-data', (req, res) => {
         // Same ground-truth verification, but for the final claimed mugshot - computed by
         // Pick Mugshot at claim time.
         mugshotHash: mugshotHash || '',
+        // Temporary panel takeover set by Juan's Emporium (shop browsing, finders-fee/haggle,
+        // item info) - the frontend shows this instead of the normal character sheet while it's
+        // present; Sync To Extension only ever sends a non-null value if it hasn't expired yet.
+        panelOverride: panelOverride || null,
         updatedAt: new Date().toISOString()
     };
 
@@ -186,6 +190,7 @@ app.get('/api/my-data', (req, res) => {
         candidateHashes: perpData.candidateHashes || [],
         mugshotVersion: perpData.mugshotVersion || '0',
         mugshotHash: perpData.mugshotHash || '',
+        panelOverride: perpData.panelOverride || null,
         updatedAt: perpData.updatedAt
     });
 });
