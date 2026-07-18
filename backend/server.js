@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -105,6 +105,7 @@ app.post('/api/push-data', (req, res) => {
         panelOverride: panelOverride || null,
         pickpocketedTargets: pickpocketedTargets || [],
         isTestAccount: !!isTestAccount,
+        pickpocketNotice: pickpocketNotice || null,
         updatedAt: new Date().toISOString()
     };
 
@@ -195,6 +196,7 @@ app.get('/api/my-data', (req, res) => {
         panelOverride: perpData.panelOverride || null,
         pickpocketedTargets: perpData.pickpocketedTargets || [],
         isTestAccount: perpData.isTestAccount || false,
+        pickpocketNotice: perpData.pickpocketNotice || null,
         presentViewers: presentViewers,
         shopListing: shopListing,
         updatedAt: perpData.updatedAt
