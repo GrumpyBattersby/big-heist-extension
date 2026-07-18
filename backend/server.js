@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -104,6 +104,7 @@ app.post('/api/push-data', (req, res) => {
         // present; Sync To Extension only ever sends a non-null value if it hasn't expired yet.
         panelOverride: panelOverride || null,
         pickpocketedTargets: pickpocketedTargets || [],
+        isTestAccount: !!isTestAccount,
         updatedAt: new Date().toISOString()
     };
 
@@ -193,6 +194,7 @@ app.get('/api/my-data', (req, res) => {
         mugshotHash: perpData.mugshotHash || '',
         panelOverride: perpData.panelOverride || null,
         pickpocketedTargets: perpData.pickpocketedTargets || [],
+        isTestAccount: perpData.isTestAccount || false,
         presentViewers: presentViewers,
         shopListing: shopListing,
         updatedAt: perpData.updatedAt
