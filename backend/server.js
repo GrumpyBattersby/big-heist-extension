@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, personalHeat, showHeat } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -107,6 +107,7 @@ app.post('/api/push-data', (req, res) => {
         isTestAccount: !!isTestAccount,
         pickpocketNotice: pickpocketNotice || null,
         shopBannedUntil: shopBannedUntil || 0,
+        offendedBannedUntil: offendedBannedUntil || 0,
         personalHeat: personalHeat || 0,
         showHeat: showHeat || 0,
         updatedAt: new Date().toISOString()
@@ -201,6 +202,7 @@ app.get('/api/my-data', (req, res) => {
         isTestAccount: perpData.isTestAccount || false,
         pickpocketNotice: perpData.pickpocketNotice || null,
         shopBannedUntil: perpData.shopBannedUntil || 0,
+        offendedBannedUntil: perpData.offendedBannedUntil || 0,
         personalHeat: perpData.personalHeat || 0,
         showHeat: perpData.showHeat || 0,
         presentViewers: presentViewers,
