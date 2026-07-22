@@ -72,7 +72,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -114,6 +114,7 @@ app.post('/api/push-data', (req, res) => {
         robberyAttemptsRemaining: typeof robberyAttemptsRemaining === 'number' ? robberyAttemptsRemaining : 999,
         bigHeist: bigHeist || null,
         pendingItemMove: pendingItemMove || null,
+        pendingBagmanChoice: pendingBagmanChoice || null,
         // Map of owned inventory key -> heat reduction amount, for items that can be burned for
         // a personal+show-wide heat drop (Disguise/EMP/SmokeBomb) - computed server-side by Sync
         // To Extension so the panel doesn't need the full item catalog just to show this list.
@@ -217,6 +218,7 @@ app.get('/api/my-data', (req, res) => {
         robberyAttemptsRemaining: typeof perpData.robberyAttemptsRemaining === 'number' ? perpData.robberyAttemptsRemaining : 999,
         bigHeist: perpData.bigHeist || null,
         pendingItemMove: perpData.pendingItemMove || null,
+        pendingBagmanChoice: perpData.pendingBagmanChoice || null,
         heatReducingItems: perpData.heatReducingItems || {},
         presentViewers: presentViewers,
         shopListing: shopListing,
