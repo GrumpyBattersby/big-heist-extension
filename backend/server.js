@@ -190,10 +190,19 @@ app.post('/api/youtube-link/start', (req, res) => {
 
     const sessionToken = crypto.randomBytes(24).toString('hex');
     // Short, easy to type in a chat message under pressure - 4 digits is plenty since codes
-    // are single-use and expire quickly; collision with another pending code just means
-    // whoever claims it first via chat gets it (astronomically unlikely to matter in practice
-    // given the short TTL and low concurrent usage).
-    const code = String(crypto.randomInt(1000, 10000));
+    // are single-use and expire quickly. Re-rolled below if it collides with another still-
+    // pending (unclaimed) code, so two viewers loading the panel around the same moment can
+    // never end up with the same code live at once - whoever typed !link first would otherwise
+    // risk claiming the wrong person's session.
+    const pendingCodes = new Set(
+        Object.values(youtubeLinkSessions).filter(s => !s.claimed).map(s => s.code)
+    );
+    let code = String(crypto.randomInt(1000, 10000));
+    let rerolls = 0;
+    while (pendingCodes.has(code) && rerolls < 20) {
+        code = String(crypto.randomInt(1000, 10000));
+        rerolls++;
+    }
 
     youtubeLinkSessions[sessionToken] = {
         code,
