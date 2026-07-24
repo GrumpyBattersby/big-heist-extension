@@ -6,6 +6,12 @@
 // 2. The Extension panel (running in each viewer's browser on Twitch) asks this server
 //    for THEIR OWN data (GET /api/my-data), proving who they are via a signed token
 //    that Twitch itself provides - nobody can ask for someone else's data.
+// 3. YouTube viewers use the standalone panel page instead of the Twitch Extension iframe,
+//    so they have no Twitch-signed token to prove identity with. Instead they go through a
+//    one-time "link code" flow: the panel generates a code, they type "!link <code>" in
+//    YouTube chat, Streamer.bot (which already knows their real YouTube identity from that
+//    chat message) confirms the claim here, and the panel exchanges that for a session token
+//    it can use on every future request - no Google Sign-In needed anywhere in this flow.
 //
 // REQUIRED ENVIRONMENT VARIABLES (set these in Render's dashboard, never in this file):
 //   PUSH_SECRET   - a password you make up, shared between this server and your Streamer.bot script
@@ -20,6 +26,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -151,19 +158,123 @@ app.post('/api/delete-data', (req, res) => {
 });
 
 // ============================
-// MY DATA - called by the Extension frontend, authenticated via Twitch's own signed token.
-// Twitch signs a JWT and hands it to the Extension automatically when it loads - we just
-// verify it came from Twitch (using our Extension Secret) and trust the userId inside it.
+// YOUTUBE PANEL LINK - one-time code flow, no Google Sign-In needed. The standalone panel
+// (opened outside Twitch, since Extensions can't run on YouTube) has no automatic identity
+// the way the Twitch Extension iframe gets one for free. Instead: the panel asks for a code,
+// the viewer types "!link <code>" in YouTube chat, and Streamer.bot - which already knows
+// their real YouTube identity because that's how chat messages arrive - confirms the claim
+// here. The panel then holds a session token proving it's genuinely that viewer, same end
+// result as Twitch's JWT handoff, just carried over chat instead of an iframe.
 // ============================
-app.get('/api/my-data', (req, res) => {
-    // This endpoint is per-viewer and personalized - caching it (whether by the browser,
-    // Twitch's CDN, or any proxy in between) would serve one viewer's data to another,
-    // or stale data after an update. Always disallow caching here.
+const LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes to actually type the code in chat
+let youtubeLinkSessions = {}; // sessionToken -> { code, claimed, userId, name, createdAt }
+
+function pruneExpiredLinkSessions() {
+    const now = Date.now();
+    for (const token of Object.keys(youtubeLinkSessions)) {
+        const session = youtubeLinkSessions[token];
+        // Keep claimed sessions around indefinitely (they back the panel's ongoing identity,
+        // same as a Twitch JWT would for as long as that tab stays open) - only prune ones that
+        // never got claimed within the window, so a stale code can't be claimed later.
+        if (!session.claimed && (now - session.createdAt) > LINK_CODE_TTL_MS) {
+            delete youtubeLinkSessions[token];
+        }
+    }
+}
+
+// Called by the standalone panel on first load (or whenever it has no stored session yet) -
+// no auth needed here, this just hands out a fresh code to display. Worst case if abused is a
+// pile of harmless unclaimed codes - nothing sensitive is exposed by generating one.
+app.post('/api/youtube-link/start', (req, res) => {
+    pruneExpiredLinkSessions();
+
+    const sessionToken = crypto.randomBytes(24).toString('hex');
+    // Short, easy to type in a chat message under pressure - 4 digits is plenty since codes
+    // are single-use and expire quickly; collision with another pending code just means
+    // whoever claims it first via chat gets it (astronomically unlikely to matter in practice
+    // given the short TTL and low concurrent usage).
+    const code = String(crypto.randomInt(1000, 10000));
+
+    youtubeLinkSessions[sessionToken] = {
+        code,
+        claimed: false,
+        userId: null,
+        name: null,
+        createdAt: Date.now()
+    };
+
+    res.json({ sessionToken, code, expiresInSeconds: LINK_CODE_TTL_MS / 1000 });
+});
+
+// Called by Streamer.bot's new "Big Heist - YouTube Panel Link" action, bound to the
+// "!link <code>" YouTube chat command - authenticated with the same push secret as every
+// other Streamer.bot-only endpoint, since only Streamer.bot can vouch for a real YouTube
+// chat identity.
+app.post('/api/youtube-link/claim', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const { code, youtubeUserId, youtubeUserName } = req.body;
+    if (!code || !youtubeUserId) {
+        return res.status(400).json({ error: 'code and youtubeUserId are required' });
+    }
+
+    pruneExpiredLinkSessions();
+
+    const match = Object.values(youtubeLinkSessions).find(s => s.code === code && !s.claimed);
+    if (!match) {
+        return res.status(404).json({ error: 'No pending link request with that code (it may have expired - refresh the panel page for a new one)' });
+    }
+
+    match.claimed = true;
+    match.userId = youtubeUserId;
+    match.name = youtubeUserName || youtubeUserId;
+
+    res.json({ success: true });
+});
+
+// Called by the standalone panel, polling every couple of seconds after it shows a code,
+// until this comes back claimed - at which point the panel stores the sessionToken and
+// starts using it for every subsequent request, same role a Twitch JWT plays.
+app.get('/api/youtube-link/status', (req, res) => {
     res.set('Cache-Control', 'no-store');
+
+    const sessionToken = req.query.sessionToken;
+    const session = sessionToken ? youtubeLinkSessions[sessionToken] : null;
+
+    if (!session) {
+        return res.status(404).json({ error: 'Unknown or expired session - request a new code' });
+    }
+
+    if (!session.claimed) {
+        return res.json({ claimed: false });
+    }
+
+    res.json({ claimed: true, userId: session.userId, name: session.name });
+});
+
+// ============================
+// IDENTITY RESOLUTION - shared by /api/my-data and /api/queue-action. Twitch viewers prove
+// identity via the signed JWT the Extension SDK hands them automatically. YouTube viewers
+// (no Extension, no JWT) instead prove it via the link-code session token from the flow
+// above. Either one resolves to a real userId that Streamer.bot also uses when pushing data,
+// so downstream code never needs to care which path got it there.
+// ============================
+function resolveIdentity(req) {
+    const ytSessionToken = req.headers['x-yt-session'];
+    if (ytSessionToken) {
+        const session = youtubeLinkSessions[ytSessionToken];
+        if (!session || !session.claimed) {
+            return { error: 'invalid_session', message: 'YouTube panel session not linked yet - type !link <code> in chat.' };
+        }
+        return { userId: session.userId };
+    }
 
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Missing authorization token' });
+        return { error: 'missing_auth', message: 'Missing authorization token' };
     }
 
     const token = authHeader.substring(7);
@@ -171,20 +282,36 @@ app.get('/api/my-data', (req, res) => {
     try {
         decoded = jwt.verify(token, Buffer.from(EXT_SECRET, 'base64'), { algorithms: ['HS256'] });
     } catch (err) {
-        return res.status(401).json({ error: 'Invalid or expired token' });
+        return { error: 'invalid_token', message: 'Invalid or expired token' };
     }
 
     // decoded.user_id is only present if the viewer has granted "share your Twitch user ID"
     // permission to the Extension - without it we only get an opaque, per-extension ID that
     // won't match the real Twitch userId Streamer.bot uses, so we have to ask for it explicitly.
     if (!decoded.user_id) {
-        return res.status(403).json({
-            error: 'identity_not_shared',
-            message: 'Please share your Twitch identity with this Extension to see your inventory.'
-        });
+        return { error: 'identity_not_shared', message: 'Please share your Twitch identity with this Extension to see your inventory.' };
     }
 
-    const perpData = store[decoded.user_id];
+    return { userId: decoded.user_id };
+}
+
+// ============================
+// MY DATA - called by the Extension frontend (Twitch JWT) or the standalone YouTube panel
+// (link-code session token) - see resolveIdentity() above for how either path is verified.
+// ============================
+app.get('/api/my-data', (req, res) => {
+    // This endpoint is per-viewer and personalized - caching it (whether by the browser,
+    // Twitch's CDN, or any proxy in between) would serve one viewer's data to another,
+    // or stale data after an update. Always disallow caching here.
+    res.set('Cache-Control', 'no-store');
+
+    const identity = resolveIdentity(req);
+    if (identity.error) {
+        const status = identity.error === 'identity_not_shared' || identity.error === 'invalid_session' ? 403 : 401;
+        return res.status(status).json({ error: identity.error, message: identity.message });
+    }
+
+    const perpData = store[identity.userId];
 
     if (!perpData) {
         return res.json({
@@ -195,7 +322,7 @@ app.get('/api/my-data', (req, res) => {
 
     res.json({
         found: true,
-        userId: decoded.user_id,
+        userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
         inventory: perpData.inventory,
@@ -286,27 +413,15 @@ app.post('/api/push-shop-listing', (req, res) => {
     res.json({ success: true });
 });
 
-// Called by the PANEL (authenticated the same way as /api/my-data - Twitch's own signed token,
-// so nobody can queue an action pretending to be someone else).
+// Called by the PANEL (authenticated the same way as /api/my-data - Twitch JWT or YouTube
+// link-code session, so nobody can queue an action pretending to be someone else). Now stamps
+// the queued action with the caller's resolved platform, so Process Panel Actions can dispatch
+// it against the right game logic instead of assuming Twitch.
 app.post('/api/queue-action', (req, res) => {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Missing authorization token' });
-    }
-
-    const token = authHeader.substring(7);
-    let decoded;
-    try {
-        decoded = jwt.verify(token, Buffer.from(EXT_SECRET, 'base64'), { algorithms: ['HS256'] });
-    } catch (err) {
-        return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-
-    if (!decoded.user_id) {
-        return res.status(403).json({
-            error: 'identity_not_shared',
-            message: 'Please share your Twitch identity with this Extension to do that.'
-        });
+    const identity = resolveIdentity(req);
+    if (identity.error) {
+        const status = identity.error === 'identity_not_shared' || identity.error === 'invalid_session' ? 403 : 401;
+        return res.status(status).json({ error: identity.error, message: identity.message });
     }
 
     const { type, payload } = req.body;
@@ -316,7 +431,7 @@ app.post('/api/queue-action', (req, res) => {
 
     pendingActions.push({
         id: nextActionId++,
-        userId: decoded.user_id,
+        userId: identity.userId,
         type: type,
         payload: payload || {},
         queuedAt: new Date().toISOString()
