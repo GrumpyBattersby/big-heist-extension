@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mega-City One Police Terminal</title>
+<!-- Standalone build: no Twitch Extension helper script - panel.js detects this and uses the YouTube link-code flow instead of Twitch.ext.onAuthorized -->
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&display=swap');
+
+    * { box-sizing: border-box; }
+
+    body {
+        margin: 0;
+        padding: 10px;
+        background: #0b1e2d;
+        color: #eaf6ff;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+    }
+
+    .terminal {
+        border: 4px solid #f5c518;
+        border-radius: 6px;
+        background: linear-gradient(180deg, #103049 0%, #0b2338 100%);
+        overflow: hidden;
+        position: relative;
+    }
+
+    .hazard-strip {
+        height: 10px;
+        background: repeating-linear-gradient(
+            45deg,
+            #f5c518, #f5c518 10px,
+            #1a1a1a 10px, #1a1a1a 20px
+        );
+    }
+
+    .header {
+        background: linear-gradient(180deg, #c0362c 0%, #8f241c 100%);
+        color: #fff2c9;
+        text-align: center;
+        padding: 8px 6px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border-bottom: 3px solid #f5c518;
+    }
+
+    .body-content {
+        padding: 10px 12px;
+    }
+
+    .top-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+    }
+
+    /* Used for the isocube and normal-mugshot views - name/status stacked ABOVE the image,
+       centered, rather than side-by-side (side-by-side was pushing name/status off-panel once
+       the isocube art needed to be wider than the old 70px mugshot). Left .top-row itself
+       unchanged (still a row) since the pending-pick-box (3 candidates) case doesn't use this
+       and shouldn't be affected. */
+    .stacked-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+    }
+    .stacked-panel #name-status-area {
+        text-align: center;
+        margin-bottom: 6px;
+    }
+
+    .mugshot-frame {
+        width: 120px;
+        height: 120px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+    .mugshot-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    /* Juan's Emporium images are landscape (roughly 1.44:1), unlike the square mugshot/isocube
+       frames, so this gets its own aspect-ratio-appropriate sizing rather than reusing those. */
+    .juan-frame {
+        width: 220px;
+        height: 153px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+    .juan-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .item-info-frame {
+        width: 160px;
+        height: 160px;
+    }
+    .item-info-frame img {
+        object-fit: contain;
+    }
+
+    .robbery-frame {
+        width: 200px;
+        height: 200px;
+    }
+
+    .heist-banner-frame {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 400 / 180;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 8px;
+    }
+    .heist-banner-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .shop-instruction {
+        font-size: 12px;
+        color: #b8d8ec;
+        margin-bottom: 6px;
+    }
+    .shop-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+    .shop-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        border-bottom: 1px solid #1e4a63;
+        padding-bottom: 2px;
+    }
+    /* shop-row-clickable turns a shop-row into a real <button> for buying an item - resets all
+       the default button chrome first so it still looks exactly like the plain (non-clickable)
+       shop-row used elsewhere (item info stats, etc). */
+    button.shop-row {
+        width: 100%;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #1e4a63;
+        font-family: inherit;
+        cursor: pointer;
+        text-align: left;
+        padding: 4px 2px;
+        border-radius: 3px;
+    }
+    button.shop-row:hover {
+        background: rgba(245, 197, 24, 0.1);
+    }
+    /* Brief disabled state while a shop's background heat roll is still pending (client-side
+       instant open) - visually distinct from the normal clickable state so it's obvious nothing
+       can be bought yet, not just slower to respond. */
+    button.shop-row:disabled, .panel-shop-button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    button.shop-row:disabled:hover {
+        background: none;
+    }
+    .shop-item-name {
+        color: #eaf6ff;
+    }
+    .shop-item-price {
+        color: #7fd858;
+        font-weight: 700;
+    }
+    .shop-row-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .shop-buy-label {
+        background: #f5c518;
+        color: #1a1a1a;
+        font-size: 10px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 2px 8px;
+        border-radius: 3px;
+    }
+    .panel-back-button, .panel-shop-button {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        padding: 6px;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .panel-back-button:hover, .panel-shop-button:hover {
+        background: #ffd93d;
+    }
+
+    /* Small, auto-width buttons for the task list (JOIN/UNASSIGN/USE) - unlike every other
+       button in this panel, these sit inline next to text rather than spanning the full width. */
+    .panel-inline-button {
+        display: inline-block;
+        width: auto;
+        margin: 0;
+        padding: 3px 10px;
+        font-family: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .panel-inline-button:hover {
+        background: #ffd93d;
+    }
+    .panel-inline-button:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .task-block {
+        margin-bottom: 14px;
+        padding: 8px;
+        border: 1px solid #f5c518;
+        border-radius: 4px;
+    }
+    .task-header {
+        color: #f5c518;
+        font-weight: 700;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid #f5c518;
+        padding-bottom: 4px;
+        margin-bottom: 6px;
+    }
+    .task-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: #b8d8ec;
+        margin-bottom: 4px;
+        gap: 8px;
+    }
+    .task-join-row {
+        text-align: center;
+        margin-top: 8px;
+    }
+    .item-reusable {
+        color: #4caf50;
+        font-weight: 700;
+    }
+    .item-single-use {
+        color: #f5c518;
+        font-weight: 700;
+    }
+    /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
+       arrest alert) - makes it visually obvious something urgent just happened, distinct from
+       Juan's Emporium's yellow/navy theme used everywhere else. */
+    .alert-frame-purple {
+        background: #2d1b4e;
+        border-color: #b088f9;
+        box-shadow: 0 0 12px rgba(176, 136, 249, 0.6);
+    }
+    /* For full-content alert takeovers (bagman choice, move-item confirmation) - unlike
+       juan-frame (a fixed 220x153 image frame with overflow:hidden), this sizes to fit
+       whatever text and buttons are actually inside it, since those were getting cut off
+       by juan-frame's fixed height. */
+    .alert-takeover-box {
+        width: 100%;
+        height: auto;
+        box-sizing: border-box;
+        padding: 12px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+    }
+    /* Judge arrest alert specifically keeps the purple background/glow for urgency, but the
+       border itself reverts to the standard yellow used everywhere else in the panel. */
+    .judge-alert-yellow-border {
+        border-color: #f5c518 !important;
+    }
+    /* Text input for the Finder search field and haggle offer field - the first place this
+       panel needs free-text entry rather than just buttons. */
+    .panel-text-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 8px;
+        padding: 8px;
+        font-family: inherit;
+        font-size: 13px;
+        color: #eaf6ff;
+        background: #0b2338;
+        border: 2px solid #1e4a63;
+        border-radius: 4px;
+    }
+    .panel-text-input:focus {
+        outline: none;
+        border-color: #f5c518;
+    }
+    .panel-text-input::placeholder {
+        color: #5a7a8f;
+    }
+    /* Dedicated style for the OI!/ARREST buttons, distinct from the plain Back/Shop buttons -
+       these are urgent, time-limited actions and should read as more attention-grabbing. */
+    .panel-urgent-button {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px;
+        font-family: inherit;
+        font-size: 16px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: 3px solid #ffd93d;
+        border-radius: 4px;
+        cursor: pointer;
+        animation: urgent-pulse 1s infinite;
+    }
+    .panel-urgent-button:hover {
+        background: #ffd93d;
+    }
+    @keyframes urgent-pulse {
+        0%, 100% { box-shadow: 0 0 4px rgba(245, 197, 24, 0.6); }
+        50% { box-shadow: 0 0 16px rgba(245, 197, 24, 1); }
+    }
+    .panel-override-expiry {
+        font-size: 10px;
+        font-style: italic;
+        color: #5a7a8f;
+        margin-top: 8px;
+    }
+    .juan-quote {
+        font-size: 11px;
+        font-style: italic;
+        color: #7fd6ff;
+        border-left: 2px solid #f5c518;
+        padding-left: 6px;
+        margin-top: 8px;
+    }
+    .mugshot-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        color: #5a7a8f;
+        text-align: center;
+    }
+    .pending-pick-box {
+        text-align: center;
+        padding: 8px 4px;
+    }
+    .pending-pick-instruction {
+        font-size: 12px;
+        font-style: italic;
+        color: #f5c518;
+        margin-bottom: 8px;
+    }
+    .candidates-row {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+    }
+    .candidate-frame {
+        width: 70px;
+        text-align: center;
+    }
+    .candidate-frame img {
+        width: 70px;
+        height: 70px;
+        object-fit: cover;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        display: block;
+    }
+    .candidate-number {
+        font-size: 11px;
+        font-weight: 700;
+        color: #7fd6ff;
+        margin-top: 4px;
+    }
+    .candidate-status {
+        width: 70px;
+        height: 70px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 10px;
+        font-style: italic;
+        color: #7fd6ff;
+        border: 3px dashed #f5c518;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+
+    /* isocube.png is now 758x793 (whitespace cropped out around the artwork) - overlay positions
+       below are re-measured directly from THIS image's actual pixel coordinates. If the artwork
+       is ever cropped/re-exported again, these will need re-measuring once more. */
+    .isocube-frame {
+        width: 200px;
+        height: 200px;
+        position: relative;
+        flex-shrink: 0;
+    }
+    .isocube-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+    .isocube-name {
+        position: absolute;
+        left: 39%;
+        top: 68%;
+        width: 44%;
+        height: 18%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #ffffff;
+        font-size: 14px;
+        line-height: 1;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        pointer-events: none;
+        transform: translateX(5px) translateY(-4px) rotate(-5deg);
+    }
+    .isocube-digit {
+        position: absolute;
+        top: 53%;
+        width: 5%;
+        height: 9%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
+        color: #f5c518;
+        text-shadow: 0 0 3px rgba(245, 197, 24, 0.6);
+        font-size: 11px;
+        pointer-events: none;
+    }
+    .isocube-digit-hours { left: 60%; }
+    .isocube-digit-minutes { left: 68%; }
+    .isocube-digit-seconds { left: 76%; }
+
+    .name-row {
+        font-size: 16px;
+        font-weight: 700;
+        color: #f5c518;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+    .status-citizen { background: #f5c518; color: #1a1a1a; }
+    .status-wanted { background: #c0362c; color: #fff; }
+    .status-isocube { background: #4a4a52; color: #eaf6ff; }
+
+    .flavor-text {
+        display: inline-block;
+        font-size: 13px;
+        font-weight: 700;
+        font-style: italic;
+        color: #f5c518;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+
+    .section-title {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 1px;
+        color: #7fd6ff;
+        border-bottom: 2px solid #1e4a63;
+        margin-top: 10px;
+        margin-bottom: 5px;
+        padding-bottom: 3px;
+    }
+
+    .skills-text, .items-text {
+        font-size: 12px;
+        line-height: 1.6;
+        color: #dceeff;
+    }
+
+    .skill-name { color: #eaf6ff; }
+    .skill-num { color: #7fd858; font-weight: 700; }
+
+    .last-crime-box {
+        background: #0b2338;
+        border: 1px solid #1e4a63;
+        border-radius: 4px;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-style: italic;
+        color: #b8d8ec;
+        margin-top: 4px;
+    }
+
+    .creds-text {
+        font-size: 16px;
+        font-weight: 700;
+        color: #f5c518;
+    }
+
+    .heat-split-row {
+        display: flex;
+        gap: 16px;
+        margin-top: 6px;
+    }
+
+    .heat-split-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+
+    .heat-split-item .section-title {
+        margin-top: 0;
+    }
+
+    .achievements-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .achievement-badge {
+        background: #1e4a63;
+        border: 2px solid #f5c518;
+        border-radius: 4px;
+        padding: 4px 10px;
+        display: inline-flex;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: #f5c518;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    #status-message {
+        color: #a0c4d8;
+        font-style: italic;
+        padding: 16px 10px;
+        text-align: center;
+    }
+
+    button {
+        background: #c0362c;
+        color: #fff2c9;
+        border: 2px solid #f5c518;
+        padding: 8px 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: 'Oswald', sans-serif;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+    }
+    button:hover { background: #8f241c; }
+
+    /* Personal escape kit - shown in the running-heist view under the getaway art. */
+    .escape-kit-note {
+        font-size: 11px;
+        font-style: italic;
+        color: #b8d8ec;
+        margin-bottom: 6px;
+    }
+    .escape-kit-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .escape-kit-item {
+        flex: 1 1 88px;
+        max-width: 120px;
+        background: #0b2338;
+        border: 1px solid #1e4a63;
+        border-radius: 4px;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    .escape-kit-img {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        border-radius: 3px;
+        border: 1px solid #1e4a63;
+        margin-bottom: 4px;
+    }
+    .escape-kit-name {
+        font-size: 11px;
+        font-weight: 700;
+        color: #eaf6ff;
+        line-height: 1.2;
+    }
+    .escape-kit-bonus {
+        font-size: 13px;
+        font-weight: 700;
+        color: #7fd858;
+        margin-top: 2px;
+    }
+    .escape-kit-total {
+        font-size: 12px;
+        color: #dceeff;
+        margin-top: 6px;
+    }
+    .escape-kit-total span {
+        color: #7fd858;
+        font-weight: 700;
+    }
+</style>
+</head>
+<body>
+
+<div class="terminal">
+    <div class="hazard-strip"></div>
+    <div class="header">Mega-City One Police Terminal</div>
+    <div class="body-content" id="content">
+        <div id="status-message">Loading...</div>
+    </div>
+    <div class="hazard-strip"></div>
+</div>
+
+<script src="panel.js"></script>
+
+</body>
+</html>
