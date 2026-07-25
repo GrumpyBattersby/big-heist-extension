@@ -449,6 +449,38 @@ app.get('/api/item-catalog', (req, res) => {
     res.json({ catalog: itemCatalog });
 });
 
+// ============================
+// CURRENT BLOCK - pushed by Big Heist - Push Current Block, itself called from the end of
+// Big Heist - Item Catalog Loader (startup) and now also from PLACE Setup (whenever a Streamdeck
+// button moves the team to a new Block). Tells the panel which robbery categories actually exist
+// in the current Block, so it can hide the ones that don't - "PLACE Setup" is the ONLY thing that
+// actually decides the current Block (there's no auto/random selection), so this always reflects
+// exactly what's on screen in the Investigation/Battlemap OBS scenes.
+// ============================
+let currentBlockData = { block: null, locations: {}, difficultyMultiplier: 1.0 };
+
+app.post('/api/current-block', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const { block, locations, difficultyMultiplier } = req.body;
+    currentBlockData = {
+        block: typeof block === 'string' ? block : null,
+        locations: (locations && typeof locations === 'object') ? locations : {},
+        difficultyMultiplier: typeof difficultyMultiplier === 'number' ? difficultyMultiplier : 1.0
+    };
+
+    res.json({ success: true });
+});
+
+app.get('/api/current-block', (req, res) => {
+    // Public, no auth needed - which Block is currently active isn't sensitive per-viewer data.
+    res.set('Cache-Control', 'no-store');
+    res.json(currentBlockData);
+});
+
 // Called by the PANEL (authenticated the same way as /api/my-data - Twitch JWT or YouTube
 // link-code session, so nobody can queue an action pretending to be someone else). Now stamps
 // the queued action with the caller's resolved platform, so Process Panel Actions can dispatch

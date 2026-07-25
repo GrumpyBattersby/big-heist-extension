@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-07-25-item-glossary-mugshot-picker");
+    console.log("BIG HEIST PANEL BUILD: 2026-07-26-block-robbery-locations");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -329,6 +329,41 @@
     // "goes back to the sheet, then teleports to the cinematic" hiccup that was reported.
     let robberyPending = false;
     let robberyPendingCategory = null;
+    // Which robbery categories actually exist in the CURRENT Block, and that Block's own
+    // difficulty multiplier - fetched fresh each time the robbery picker opens (the Block only
+    // changes when the streamer moves it via Streamdeck, so no continuous polling needed). Null
+    // until the first fetch resolves, or if the fetch fails - see getAvailableRobberyCategories().
+    let currentBlockInfo = null;
+
+    function fetchCurrentBlock() {
+        fetch(BACKEND_URL + "/api/current-block")
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                currentBlockInfo = data;
+                if (showRobberyPicker && lastFetchedData) renderPerpSheet(lastFetchedData);
+            })
+            .catch(function (err) {
+                console.error("current-block fetch failed:", err);
+            });
+    }
+
+    // Shared by both the render and the click-wiring code below so they always agree on which
+    // categories are showing and in what order (the "-i" suffix on each button/row id is an index
+    // into whatever this returns, so a mismatch between the two call sites would wire the wrong
+    // click handler to the wrong button). Falls back to the full static list with generic labels
+    // if the Block data hasn't loaded yet or a category is missing from it - fails open rather
+    // than showing nothing, since a robbery attempt with a generic flavour is far better than the
+    // whole feature appearing broken while /api/current-block is still in flight.
+    function getAvailableRobberyCategories() {
+        if (!currentBlockInfo || !currentBlockInfo.locations || Object.keys(currentBlockInfo.locations).length === 0) {
+            return ROBBERY_CATEGORIES;
+        }
+        return ROBBERY_CATEGORIES
+            .filter(function (cat) { return !!currentBlockInfo.locations[cat.key]; })
+            .map(function (cat) {
+                return { key: cat.key, label: currentBlockInfo.locations[cat.key], image: cat.image };
+            });
+    }
     // Same freeze-on-transition idea as lastKnownTopRowMode above, but for the bottom content
     // area specifically for the two modes that contain a real text input (findersFee's haggle
     // offer field, the Finder page's search field) - without this, the normal 15s poll (or the
@@ -1530,11 +1565,17 @@
                 }
             }
         } else if (showRobberyPicker) {
-            // Client-side only, same reasoning as Sell/Pickpocket/Lay Low - the category list
-            // itself is static (defined once in ROBBERY_CATEGORIES), no server round-trip needed
-            // just to browse the options.
+            // The category LIST is static (ROBBERY_CATEGORIES), but which ones are actually
+            // available - and what to call them - depends on the current Block, fetched via
+            // getAvailableRobberyCategories()/fetchCurrentBlock() below. A job whose Block doesn't
+            // have a location for it simply doesn't show a button, same as it's rejected
+            // server-side in Robbery - Attempt if somehow triggered anyway.
             html += '<div class="section-title">Pick a Job</div>';
-            ROBBERY_CATEGORIES.forEach(function (cat, i) {
+            const availableRobberyCategories = getAvailableRobberyCategories();
+            if (availableRobberyCategories.length === 0) {
+                html += '<div class="items-text">Nothing worth robbing in this Block right now - try again once the team moves on.</div>';
+            }
+            availableRobberyCategories.forEach(function (cat, i) {
                 html += '<button class="panel-shop-button" id="robbery-category-' + i + '" data-category="' + escapeHtml(cat.key) + '">' + escapeHtml(cat.label) + '</button>';
             });
             html += '<button class="panel-back-button" id="panel-robbery-cancel">&larr; Cancel</button>';
@@ -2058,6 +2099,10 @@
         if (robberyButton) {
             robberyButton.addEventListener("click", function () {
                 showRobberyPicker = true;
+                // Always refetch on open rather than trusting a stale cache - the streamer can
+                // move the team to a new Block between panel opens, and this is cheap/rare enough
+                // (one fetch per picker-open, not polled) that freshness is worth it.
+                fetchCurrentBlock();
                 if (lastFetchedData) renderPerpSheet(lastFetchedData);
             });
         }
@@ -2071,7 +2116,7 @@
         }
 
         if (showRobberyPicker) {
-            ROBBERY_CATEGORIES.forEach(function (cat, i) {
+            getAvailableRobberyCategories().forEach(function (cat, i) {
                 const row = document.getElementById("robbery-category-" + i);
                 if (row) {
                     row.addEventListener("click", function () {
