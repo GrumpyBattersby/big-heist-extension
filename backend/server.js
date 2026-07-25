@@ -422,6 +422,33 @@ app.post('/api/push-shop-listing', (req, res) => {
     res.json({ success: true });
 });
 
+// ============================
+// ITEM CATALOG - pushed by Big Heist - Push Item Catalog (called at the end of Big Heist - Item
+// Catalog Loader), so the panel's Item Glossary button can fetch the whole item database once,
+// cache it client-side, and render it as a searchable list with pictures, descriptions, and
+// where-to-find info - covers !iteminfo / !itemcatalog / !itemsearch without needing chat typing.
+// Same trusted-push pattern as shop listing above - display only, never used for transactions.
+// ============================
+let itemCatalog = {};
+
+app.post('/api/item-catalog', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+
+    const { catalog } = req.body;
+    itemCatalog = (catalog && typeof catalog === 'object') ? catalog : {};
+
+    res.json({ success: true });
+});
+
+app.get('/api/item-catalog', (req, res) => {
+    // Public, no auth needed - this is a static reference catalog, not per-viewer data.
+    res.set('Cache-Control', 'no-store');
+    res.json({ catalog: itemCatalog });
+});
+
 // Called by the PANEL (authenticated the same way as /api/my-data - Twitch JWT or YouTube
 // link-code session, so nobody can queue an action pretending to be someone else). Now stamps
 // the queued action with the caller's resolved platform, so Process Panel Actions can dispatch
