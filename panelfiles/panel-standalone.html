@@ -667,6 +667,102 @@
         color: #7fd858;
         font-weight: 700;
     }
+
+    /* ============================
+       ITEM GLOSSARY - persistent bottom button (lives outside #content so it survives every
+       render branch in panel.js untouched) and the full-panel overlay it toggles.
+       ============================ */
+    .glossary-open-button {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px;
+        background: #1a3a52;
+        color: #f5c518;
+        border: 2px solid #f5c518;
+        border-radius: 4px;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+    }
+    .glossary-open-button:hover {
+        background: #24506f;
+    }
+
+    #glossary-overlay {
+        display: none;
+        padding: 10px;
+        max-height: 520px;
+        overflow-y: auto;
+    }
+    #glossary-overlay.glossary-visible {
+        display: block;
+    }
+    .terminal.glossary-active #content {
+        display: none;
+    }
+
+    .glossary-search {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+        background: #0b2338;
+        color: #eaf6ff;
+        border: 1px solid #f5c518;
+        border-radius: 4px;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+    }
+
+    .glossary-item {
+        display: flex;
+        gap: 10px;
+        padding: 10px;
+        margin-bottom: 8px;
+        background: #0e2c42;
+        border: 1px solid #2a5a7a;
+        border-radius: 4px;
+    }
+    .glossary-item-img-frame {
+        flex: 0 0 64px;
+        width: 64px;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0b1e2d;
+        border: 1px solid #2a5a7a;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .glossary-item-img-frame img {
+        max-width: 100%;
+        max-height: 100%;
+    }
+    .glossary-item-body {
+        flex: 1;
+        min-width: 0;
+    }
+    .glossary-item-name {
+        font-weight: 700;
+        color: #f5c518;
+        margin-bottom: 2px;
+    }
+    .glossary-item-meta {
+        font-size: 12px;
+        color: #9fc8e0;
+        margin-bottom: 4px;
+    }
+    .glossary-item-desc {
+        font-size: 13px;
+        line-height: 1.35;
+        margin-bottom: 4px;
+    }
+    .glossary-item-where {
+        font-size: 12px;
+        color: #7fd858;
+    }
 </style>
 </head>
 <body>
@@ -677,6 +773,8 @@
     <div class="body-content" id="content">
         <div id="status-message">Loading...</div>
     </div>
+    <div id="glossary-overlay"></div>
+    <button class="glossary-open-button" id="glossary-open-button" type="button">Item Glossary</button>
     <div class="hazard-strip"></div>
 </div>
 

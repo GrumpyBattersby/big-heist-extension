@@ -1,8 +1,8 @@
-// VERSION MARKER - if you open the browser console (F12) and DON'T see this exact line, the
+    // VERSION MARKER - if you open the browser console (F12) and DON'T see this exact line, the
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-07-24-youtube-link-flow");
+    console.log("BIG HEIST PANEL BUILD: 2026-07-25-item-glossary-mugshot-picker");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -112,6 +112,11 @@
     } else {
         bootstrapYoutubePanel();
     }
+
+    // Persistent bottom button - lives outside #content in panel.html, so wiring it here (once,
+    // at script load) works regardless of which of the two paths above just ran, and survives
+    // every one of renderPerpSheet's many innerHTML rebuilds of #content untouched.
+    setupItemGlossary();
 
     // Gets a fresh short code from the backend and shows it, then polls until the viewer has
     // typed !link <code> in YouTube chat (handled server-side by Big Heist - YouTube Panel Link).
@@ -894,13 +899,15 @@
             // skeleton) since only the first poll schedules a new load attempt below.
             if (lastKnownTopRowMode !== "pending") {
                 let topRowHtml = '<div class="pending-pick-box">';
-                topRowHtml += '<div class="pending-pick-instruction">Type !pickmugshot 1, 2, or 3 in chat to choose</div>';
+                topRowHtml += '<div class="pending-pick-instruction">Choose your mugshot:</div>';
                 topRowHtml += '<div class="candidates-row">';
                 for (let i = 1; i <= 3; i++) {
                     topRowHtml += '<div class="candidate-frame" id="candidate-frame-' + i + '">' +
                         '<div class="candidate-status" id="candidate-status-' + i + '">Preparing...</div>' +
                         '<img id="candidate-img-' + i + '" class="candidate-img-' + i + '" style="display:none">' +
-                        '<div class="candidate-number">' + i + '</div></div>';
+                        '<div class="candidate-number">' + i + '</div>' +
+                        '<button class="panel-shop-button candidate-choose-button" id="candidate-choose-' + i + '">Choose</button>' +
+                        '</div>';
                 }
                 topRowHtml += '</div>';
                 topRowHtml += '<div id="name-status-area"></div>';
@@ -909,6 +916,25 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = "pending";
                 currentCandidateHashes = data.candidateHashes || [];
+
+                // Click-to-pick replacement for typing "!pickmugshot 1/2/3" in chat - sends the
+                // exact same rawInput (a bare "1"/"2"/"3") that Heist - Pick Mugshot's chat
+                // command parser already expects, via the new pickMugshot panel action type, so
+                // Pick Mugshot itself needed zero changes. All 3 buttons disable immediately on
+                // click (not just the clicked one) to prevent a second click on a different
+                // candidate while the server-side pick is still in flight.
+                for (let i = 1; i <= 3; i++) {
+                    const chooseBtn = document.getElementById("candidate-choose-" + i);
+                    if (chooseBtn) {
+                        chooseBtn.addEventListener("click", function () {
+                            for (let j = 1; j <= 3; j++) {
+                                const otherBtn = document.getElementById("candidate-choose-" + j);
+                                if (otherBtn) otherBtn.disabled = true;
+                            }
+                            queueAction("pickMugshot", { choice: String(i) });
+                        });
+                    }
+                }
 
                 // Short wait before the first attempt, just to let Become Perp's delete-then-
                 // upload sequence get underway - the actual correctness guarantee comes from
@@ -2322,4 +2348,146 @@
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    // ============================
+    // ITEM GLOSSARY - replaces !itemcatalog/!iteminfo/!itemsearch with a click-to-browse list,
+    // fetched once from a dedicated endpoint (not embedded in the regular 15s poll payload,
+    // since the catalog is large and effectively static - only changes when the Item Catalog
+    // Loader re-runs on the Streamer.bot side) and cached client-side for the rest of the
+    // session. Lives entirely in its own overlay (#glossary-overlay, a sibling of #content in
+    // panel.html) rather than hooking into renderPerpSheet's mode branching, so it can never be
+    // wiped out by a poll landing mid-browse, and touching it carries zero risk of breaking any
+    // of the existing mugshot/shop/heist render paths.
+    // ============================
+    let itemGlossaryCache = null;
+    let itemGlossaryFilter = "";
+
+    function setupItemGlossary() {
+        const openBtn = document.getElementById("glossary-open-button");
+        if (!openBtn) return;
+
+        openBtn.addEventListener("click", function () {
+            const terminal = document.querySelector(".terminal");
+            const overlay = document.getElementById("glossary-overlay");
+            if (!terminal || !overlay) return;
+
+            terminal.classList.add("glossary-active");
+            overlay.classList.add("glossary-visible");
+
+            if (itemGlossaryCache) {
+                renderItemGlossary();
+                return;
+            }
+
+            overlay.innerHTML = '<div class="items-text">Loading catalog...</div>';
+            fetch(BACKEND_URL + "/api/item-catalog")
+                .then(function (res) { return res.json(); })
+                .then(function (data) {
+                    itemGlossaryCache = (data && data.catalog) ? data.catalog : {};
+                    renderItemGlossary();
+                })
+                .catch(function (err) {
+                    console.error("item-catalog fetch failed:", err);
+                    overlay.innerHTML =
+                        '<div class="items-text">Could not load the item catalog - try again later.</div>' +
+                        '<button class="panel-back-button" id="glossary-close-button">&larr; Close</button>';
+                    wireGlossaryCloseButton();
+                });
+        });
+    }
+
+    function wireGlossaryCloseButton() {
+        const closeBtn = document.getElementById("glossary-close-button");
+        if (closeBtn) {
+            closeBtn.addEventListener("click", function () {
+                const terminal = document.querySelector(".terminal");
+                const overlay = document.getElementById("glossary-overlay");
+                if (terminal) terminal.classList.remove("glossary-active");
+                if (overlay) overlay.classList.remove("glossary-visible");
+            });
+        }
+    }
+
+    function renderItemGlossary() {
+        const overlay = document.getElementById("glossary-overlay");
+        if (!overlay || !itemGlossaryCache) return;
+
+        const allKeys = Object.keys(itemGlossaryCache).sort();
+
+        let html = '<div class="section-title">Item Glossary</div>';
+        html += '<input type="text" class="glossary-search" id="glossary-search-input" placeholder="Search items..." value="' + escapeHtml(itemGlossaryFilter) + '">';
+        html += '<div id="glossary-list">' + buildGlossaryListHtml(allKeys) + '</div>';
+        html += '<button class="panel-back-button" id="glossary-close-button">&larr; Close</button>';
+
+        overlay.innerHTML = html;
+        wireGlossaryCloseButton();
+
+        const searchInput = document.getElementById("glossary-search-input");
+        if (searchInput) {
+            // Focus it immediately so typing works right after opening without an extra click -
+            // cursor lands at the end of any already-typed filter text rather than the start.
+            searchInput.focus();
+            const existingLength = searchInput.value.length;
+            searchInput.setSelectionRange(existingLength, existingLength);
+
+            searchInput.addEventListener("input", function () {
+                itemGlossaryFilter = searchInput.value;
+                const listEl = document.getElementById("glossary-list");
+                if (listEl) listEl.innerHTML = buildGlossaryListHtml(allKeys);
+            });
+        }
+    }
+
+    function buildGlossaryListHtml(allKeys) {
+        const filterLower = itemGlossaryFilter.trim().toLowerCase();
+        const keys = filterLower
+            ? allKeys.filter(function (k) { return k.toLowerCase().indexOf(filterLower) !== -1; })
+            : allKeys;
+
+        if (keys.length === 0) {
+            return '<div class="items-text">No items match "' + escapeHtml(itemGlossaryFilter) + '".</div>';
+        }
+
+        let html = "";
+        keys.forEach(function (key) {
+            const def = itemGlossaryCache[key] || {};
+            const imageFile = def.imageFile;
+            const description = def.description || "No description on file yet.";
+            const category = def.category || "Uncategorized";
+            const priceMin = def.priceMin;
+            const priceMax = def.priceMax;
+            const shopWeight = def.shopWeight || 0;
+            const stealLocations = Array.isArray(def.stealLocations) ? def.stealLocations : [];
+
+            // "Where you find it" - combines the two ways an item can actually be acquired.
+            // shopWeight > 0 means Juan can stock it; stealLocations lists robbery targets it
+            // can drop from. An item with neither (shopWeight 0, no steal locations) genuinely
+            // isn't obtainable right now - said plainly rather than showing an empty line.
+            const whereParts = [];
+            if (shopWeight > 0) {
+                const priceRange = (priceMin || priceMax) ? " (" + (priceMin || 0) + "-" + (priceMax || 0) + " creds)" : "";
+                whereParts.push("Juan's Emporium" + priceRange);
+            }
+            if (stealLocations.length > 0) {
+                whereParts.push("Rob from: " + stealLocations.map(humanize).join(", "));
+            }
+            const whereText = whereParts.length > 0 ? whereParts.join(" | ") : "Not currently obtainable";
+
+            html += '<div class="glossary-item">';
+            html += '<div class="glossary-item-img-frame">';
+            html += imageFile
+                ? '<img src="' + ITEMS_BASE_URL + '/' + encodeURIComponent(imageFile) + '" alt="' + escapeHtml(humanize(key)) + '">'
+                : '<div class="mugshot-placeholder">No image</div>';
+            html += '</div>';
+            html += '<div class="glossary-item-body">';
+            html += '<div class="glossary-item-name">' + escapeHtml(humanize(key)) + '</div>';
+            html += '<div class="glossary-item-meta">' + escapeHtml(category) + '</div>';
+            html += '<div class="glossary-item-desc">' + escapeHtml(description) + '</div>';
+            html += '<div class="glossary-item-where">' + escapeHtml(whereText) + '</div>';
+            html += '</div>';
+            html += '</div>';
+        });
+
+        return html;
     }
