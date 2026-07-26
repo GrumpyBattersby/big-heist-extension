@@ -1813,8 +1813,22 @@
         // for expiry same as panelOverride, prepended regardless of which view is currently
         // showing since it's about something that just happened to the player, not tied to
         // whatever section they happen to be looking at.
-        if (data.pickpocketNotice && data.pickpocketNotice.message
-            && (!data.pickpocketNotice.expiresAt || data.pickpocketNotice.expiresAt > Math.floor(Date.now() / 1000))) {
+        var hasFreshNotice = data.pickpocketNotice && data.pickpocketNotice.message
+            && (!data.pickpocketNotice.expiresAt || data.pickpocketNotice.expiresAt > Math.floor(Date.now() / 1000));
+
+        // Real bug reported: panel stuck forever on "The X job is underway..." after Robbery -
+        // Attempt REJECTED the job server-side (block/category mismatch, laying low, per-stream
+        // cap, a busy-lock retry, etc.) rather than resolving it - those reject paths post a
+        // notice via this same pickpocketNotice field instead of a robberyResult override, and
+        // robberyPending was previously only ever cleared by that override arriving. A notice
+        // landing while still "pending" can only mean the attempt was rejected, never a real
+        // in-progress job, so it's always safe to clear the pending screen here.
+        if (hasFreshNotice && robberyPending) {
+            robberyPending = false;
+            robberyPendingCategory = null;
+        }
+
+        if (hasFreshNotice) {
             html = '<div class="juan-quote">' + escapeHtml(data.pickpocketNotice.message) + '</div>' + html;
         }
 
