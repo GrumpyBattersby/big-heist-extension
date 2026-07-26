@@ -253,6 +253,10 @@
         border-radius: 4px;
     }
     .task-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
         color: #f5c518;
         font-weight: 700;
         font-size: 13px;
@@ -262,6 +266,20 @@
         padding-bottom: 4px;
         margin-bottom: 6px;
     }
+    /* Right-aligned task status icon in the header - tick/cross/dot showing at a glance whether
+       a task is fully covered, guaranteed to fail the heist, or incomplete-but-not-fatal. Hover
+       (native title attribute) explains what each state means. */
+    .task-status-icon {
+        flex-shrink: 0;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: help;
+        text-transform: none;
+        letter-spacing: normal;
+    }
+    .task-status-green { color: #4caf50; }
+    .task-status-amber { color: #ff9800; }
+    .task-status-red { color: #c0362c; }
     .task-row {
         display: flex;
         justify-content: space-between;

@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-07-26-getaway-item-assign");
+    console.log("BIG HEIST PANEL BUILD: 2026-07-26-task-status-icons");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1598,7 +1598,9 @@
                     const difficultySentence = 'This is going to be ' + difficultyWord + ' task for you ' + task.difficulty + '.';
 
                     html += '<div class="task-block">';
-                    html += '<div class="task-header">' + (i + 1) + ': ' + escapeHtml(humanize(task.taskKey).toUpperCase()) + '</div>';
+                    const statusInfo = taskStatusIcon(task);
+                    html += '<div class="task-header"><span>' + (i + 1) + ': ' + escapeHtml(humanize(task.taskKey).toUpperCase()) + '</span>'
+                        + '<span class="task-status-icon ' + statusInfo.cls + '" title="' + escapeHtml(statusInfo.tooltip) + '">' + statusInfo.icon + '</span></div>';
                     if (task.taskDescription) {
                         html += '<div class="items-text">' + escapeHtml(task.taskDescription) + '</div>';
                     }
@@ -2720,6 +2722,30 @@
     function humanize(s) {
         if (!s) return s;
         return s.charAt(0).toUpperCase() + s.slice(1).replace(/([a-z])([A-Z])/g, '$1 $2');
+    }
+
+    // Green tick / amber dot / red cross for a task's header, mirroring the exact fill rule the
+    // server itself uses to color the Task Flow boxes on stream (Big Heist - Update Task Flow
+    // Colors: green = crew AND item both covered, red = a make-or-break task with NEITHER crew
+    // nor item at all, amber = everything else incomplete). Unlike that OBS display, this isn't
+    // gated behind "revealed" - a player checking their own panel should always see the real
+    // status, not wait for the on-stream reveal moment.
+    function taskStatusIcon(task) {
+        const hasPerson = (task.crewFilled || 0) > 0;
+        const needsItem = !!task.requiredItem;
+        const hasItem = needsItem && !!task.requiredItemFilled;
+        const itemLegSatisfied = !needsItem || hasItem;
+
+        if (hasPerson && itemLegSatisfied) {
+            return { cls: 'task-status-green', icon: '✓', tooltip: 'Complete - this task has everything it needs.' };
+        }
+        if (task.makeOrBreak && !hasPerson && !hasItem) {
+            return { cls: 'task-status-red', icon: '✗', tooltip: 'Make-or-break task with nobody on it - the heist will fail unless someone takes it before the deadline.' };
+        }
+        if (task.makeOrBreak) {
+            return { cls: 'task-status-amber', icon: '●', tooltip: 'Make-or-break task, partially covered - still missing something, but it won\'t auto-fail the heist as long as it isn\'t left completely empty.' };
+        }
+        return { cls: 'task-status-amber', icon: '●', tooltip: 'Optional task - incomplete, but it won\'t cause the heist to fail.' };
     }
 
     function humanizeItemKey(fullKey) {
