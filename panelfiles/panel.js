@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-07-26-block-robbery-locations");
+    console.log("BIG HEIST PANEL BUILD: 2026-07-26-trade-and-glossary-card");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -58,6 +58,17 @@
     let showLayLowBrowser = false;
     let showRobberyPicker = false;
     let showBigHeistView = false;
+    // Trade flow - client-side wizard (target -> what you're offering -> what you want
+    // back) that ends by queueing "proposeTrade". Everything AFTER that point (both
+    // parties seeing the offer, accepting/declining) is server-driven via the
+    // tradeIncoming/tradeSent panelOverride modes, same pattern as findersFee/shopReady.
+    let showTradePicker = false;
+    let tradeWizardStep = "target"; // "target" | "offer" | "request"
+    let tradeTarget = null;         // { userId, name }
+    let tradeOfferCredits = 0;
+    let tradeOfferItems = {};       // itemKey -> qty
+    let tradeRequestCredits = 0;
+    let tradeRequestItems = {};     // itemKey -> qty
     // Tracks which tasks have a join in flight, keyed by taskKey - survives re-renders (unlike
     // just disabling the clicked button, which gets wiped out if a poll re-renders the task list
     // with fresh HTML before the real confirmation arrives, creating a brand new enabled button
@@ -612,6 +623,18 @@
         });
     }
 
+    // Same present-viewers source as Pickpocket, but no "already tried"/"laying low"
+    // exclusions - there's no reason those should block a trade.
+    function getTradeCandidates(data) {
+        let list = data.presentViewers || [];
+        if (data.isTestAccount && !list.some(function (v) { return v.userId === currentUserId; })) {
+            list = list.concat([{ userId: currentUserId, name: data.name }]);
+        }
+        return list.filter(function (v) {
+            return v.userId !== currentUserId || !!data.isTestAccount;
+        });
+    }
+
     function renderPerpSheet(data) {
         if (purchaseConfirmationMessage) {
             // Keeps whatever's already showing in the top-row (mugshot/isocube/etc) completely
@@ -708,6 +731,7 @@
             showLayLowBrowser = false;
             showRobberyPicker = false;
             showBigHeistView = false;
+            showTradePicker = false;
         }
 
         // Resolves the shop-entry heat check (see shopEntryPending above). "shopReady" means the
@@ -1030,6 +1054,10 @@
                     topRowHtml += robberyCinematicData && robberyCinematicData.locationImage
                         ? '<div class="juan-frame robbery-frame"><img src="' + robberyCinematicData.locationImage + '" alt="' + escapeHtml(robberyCinematicData.jobLabel || "") + '"></div>'
                         : '<div class="juan-frame robbery-frame"><div class="mugshot-placeholder">' + escapeHtml((robberyCinematicData && robberyCinematicData.jobLabel) || "") + '</div></div>';
+                } else if (overrideMode === "tradeIncoming" || overrideMode === "tradeSent") {
+                    // No dedicated art for this one - a plain placeholder frame is enough, same
+                    // treatment as the "no image yet" itemInfo fallback.
+                    topRowHtml += '<div class="juan-frame alert-frame-purple"><div class="mugshot-placeholder">TRADE</div></div>';
                 }
                 topRowHtml += '</div>';
 
@@ -1154,6 +1182,10 @@
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' is turned away at the door...</div>';
         } else if (overrideMode === "offendedDenied") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' has offended Juan...</div>';
+        } else if (overrideMode === "tradeIncoming") {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' has an offer waiting...</div>';
+        } else if (overrideMode === "tradeSent") {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' is waiting on a reply...</div>';
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             // Deliberately static/generic here - this area only rebuilds on a top-row mode
             // transition, not per cinematic stage, so the actual staged narrative text all lives
@@ -1316,6 +1348,94 @@
             html += '<div class="section-title">Deal\'s Off</div>';
             html += '<div class="juan-quote">Juan\'s face goes cold. "That offer is an insult. Get out of my shop - and don\'t come back until you\'ve learned some manners."</div>';
             html += '<button class="panel-back-button" id="panel-back-button">&larr; Back</button>';
+        } else if (overrideMode === "tradeIncoming") {
+            const ov = data.panelOverride || {};
+            const trade = ov.trade || {};
+            html += '<div class="section-title">Trade Offer From ' + escapeHtml(trade.fromUserName || "Someone") + '</div>';
+            html += '<div class="shop-list">';
+            html += '<div class="shop-row"><span class="shop-item-name">They\'re offering</span></div>';
+            if (trade.offerCredits > 0) {
+                html += '<div class="shop-row"><span class="shop-item-name">Creds</span><span class="shop-item-price">' + trade.offerCredits + '</span></div>';
+            }
+            (trade.offerItems || []).forEach(function (line) {
+                html += '<div class="shop-row"><span class="shop-item-name">' + escapeHtml(humanizeItemKey(line.itemKey)) + '</span><span class="shop-item-price">x' + line.qty + '</span></div>';
+            });
+            if (trade.offerCredits <= 0 && (!trade.offerItems || trade.offerItems.length === 0)) {
+                html += '<div class="shop-row"><span class="shop-item-name">Nothing</span></div>';
+            }
+            html += '</div>';
+            html += '<div class="shop-list">';
+            html += '<div class="shop-row"><span class="shop-item-name">They want back</span></div>';
+            if (trade.requestCredits > 0) {
+                html += '<div class="shop-row"><span class="shop-item-name">Creds</span><span class="shop-item-price">' + trade.requestCredits + '</span></div>';
+            }
+            (trade.requestItems || []).forEach(function (line) {
+                html += '<div class="shop-row"><span class="shop-item-name">' + escapeHtml(humanizeItemKey(line.itemKey)) + '</span><span class="shop-item-price">x' + line.qty + '</span></div>';
+            });
+            if (trade.requestCredits <= 0 && (!trade.requestItems || trade.requestItems.length === 0)) {
+                html += '<div class="shop-row"><span class="shop-item-name">Nothing</span></div>';
+            }
+            html += '</div>';
+            html += '<button class="panel-urgent-button" id="panel-trade-accept-button">Accept</button>';
+            html += '<button class="panel-back-button" id="panel-trade-decline-button">Decline</button>';
+            html += '<div class="panel-override-expiry">This offer expires in a few minutes if you don\'t respond.</div>';
+        } else if (overrideMode === "tradeSent") {
+            const ov = data.panelOverride || {};
+            const trade = ov.trade || {};
+            html += '<div class="section-title">Trade Offer Sent</div>';
+            html += '<div class="juan-quote">Waiting on ' + escapeHtml(trade.toUserName || "them") + ' to respond...</div>';
+            html += '<button class="panel-back-button" id="panel-trade-cancel-button">Cancel Offer</button>';
+            html += '<div class="panel-override-expiry">This expires automatically in a few minutes if they don\'t respond.</div>';
+        } else if (showTradePicker && tradeWizardStep === "target") {
+            const tradeCandidates = getTradeCandidates(data);
+            html += '<div class="section-title">Trade With Who?</div>';
+            if (tradeCandidates.length === 0) {
+                html += '<div class="items-text">Nobody eligible is currently present.</div>';
+            } else {
+                html += '<div class="shop-list">';
+                tradeCandidates.forEach(function (v, i) {
+                    html += '<button class="panel-shop-button" id="trade-target-' + i + '" data-target="' + escapeHtml(v.userId) + '">' + escapeHtml(v.name) + '</button>';
+                });
+                html += '</div>';
+            }
+            html += '<button class="panel-back-button" id="panel-trade-cancel-wizard">&larr; Cancel</button>';
+        } else if (showTradePicker && tradeWizardStep === "offer") {
+            const ownItemKeysForTrade = Object.keys(data.inventory || {}).filter(function (k) { return data.inventory[k] > 0; });
+            const ownPointsForTrade = typeof data.points === "number" ? data.points : 0;
+            html += '<div class="section-title">What Are You Offering ' + escapeHtml(tradeTarget ? tradeTarget.name : "") + '?</div>';
+            html += '<div class="shop-instruction">Creds you have: ' + ownPointsForTrade + '</div>';
+            html += '<input type="number" min="0" max="' + ownPointsForTrade + '" class="panel-text-input" id="trade-offer-credits-input" value="' + tradeOfferCredits + '" placeholder="Creds to offer">';
+            if (ownItemKeysForTrade.length === 0) {
+                html += '<div class="items-text">You don\'t have any items to offer.</div>';
+            } else {
+                html += '<div class="shop-list">';
+                ownItemKeysForTrade.forEach(function (fullKey, i) {
+                    const owned = data.inventory[fullKey];
+                    const current = tradeOfferItems[fullKey] || 0;
+                    html += '<div class="shop-row"><span class="shop-item-name">' + escapeHtml(humanizeItemKey(fullKey)) + ' (own ' + owned + ')</span><input type="number" min="0" max="' + owned + '" class="panel-text-input" id="trade-offer-qty-' + i + '" value="' + current + '"></div>';
+                });
+                html += '</div>';
+            }
+            html += '<button class="panel-shop-button" id="panel-trade-offer-next">Next: What Do You Want Back?</button>';
+            html += '<button class="panel-back-button" id="panel-trade-offer-back">&larr; Back</button>';
+        } else if (showTradePicker && tradeWizardStep === "request") {
+            html += '<div class="section-title">What Do You Want Back?</div>';
+            html += '<input type="number" min="0" class="panel-text-input" id="trade-request-credits-input" value="' + tradeRequestCredits + '" placeholder="Creds to request">';
+            const catalogKeysForTrade = itemGlossaryCache ? Object.keys(itemGlossaryCache).sort() : [];
+            if (!itemGlossaryCache) {
+                html += '<div class="items-text">Loading item list...</div>';
+            } else if (catalogKeysForTrade.length === 0) {
+                html += '<div class="items-text">No catalog items available.</div>';
+            } else {
+                html += '<div class="shop-list">';
+                catalogKeysForTrade.forEach(function (fullKey, i) {
+                    const current = tradeRequestItems[fullKey] || 0;
+                    html += '<div class="shop-row"><span class="shop-item-name">' + escapeHtml(humanizeItemKey(fullKey)) + '</span><input type="number" min="0" class="panel-text-input" id="trade-request-qty-' + i + '" value="' + current + '"></div>';
+                });
+                html += '</div>';
+            }
+            html += '<button class="panel-urgent-button" id="panel-trade-send-button">Send Trade Offer</button>';
+            html += '<button class="panel-back-button" id="panel-trade-request-back">&larr; Back</button>';
         } else if (showFinderPage) {
             // Panel-driven replacement for !finditem - a text search field. Submitting queues
             // finderSearch, which triggers the same server-side Finders Fee System logic a chat
@@ -1665,6 +1785,7 @@
                 } else {
                     html += '<div class="panel-override-expiry">You\'ve pushed your luck enough for one stream - no robberies left tonight.</div>';
                 }
+                html += '<button class="panel-shop-button" id="panel-trade-button">Trade</button>';
             }
             if (!stillJailed) {
                 // Always available (not gated on owning an item, and not hidden while laying low
@@ -2107,6 +2228,172 @@
             });
         }
 
+        // ============================
+        // TRADE - open button, accept/decline/cancel on a live tradeIncoming/tradeSent
+        // override, and the full 3-step propose wizard (target -> offer -> request).
+        // ============================
+        const tradeButton = document.getElementById("panel-trade-button");
+        if (tradeButton) {
+            tradeButton.addEventListener("click", function () {
+                showTradePicker = true;
+                tradeWizardStep = "target";
+                tradeTarget = null;
+                tradeOfferCredits = 0;
+                tradeOfferItems = {};
+                tradeRequestCredits = 0;
+                tradeRequestItems = {};
+                if (lastFetchedData) renderPerpSheet(lastFetchedData);
+            });
+        }
+
+        const tradeAcceptBtn = document.getElementById("panel-trade-accept-button");
+        if (tradeAcceptBtn) {
+            tradeAcceptBtn.addEventListener("click", function () {
+                tradeAcceptBtn.disabled = true;
+                const tid = (data.panelOverride && data.panelOverride.trade && data.panelOverride.trade.tradeId) || "";
+                queueAction("acceptTrade", { tradeId: tid });
+            });
+        }
+        const tradeDeclineBtn = document.getElementById("panel-trade-decline-button");
+        if (tradeDeclineBtn) {
+            tradeDeclineBtn.addEventListener("click", function () {
+                tradeDeclineBtn.disabled = true;
+                const tid = (data.panelOverride && data.panelOverride.trade && data.panelOverride.trade.tradeId) || "";
+                queueAction("declineTrade", { tradeId: tid });
+            });
+        }
+        const tradeCancelBtn = document.getElementById("panel-trade-cancel-button");
+        if (tradeCancelBtn) {
+            tradeCancelBtn.addEventListener("click", function () {
+                tradeCancelBtn.disabled = true;
+                const tid = (data.panelOverride && data.panelOverride.trade && data.panelOverride.trade.tradeId) || "";
+                queueAction("cancelTrade", { tradeId: tid });
+            });
+        }
+
+        if (showTradePicker && tradeWizardStep === "target") {
+            getTradeCandidates(data).forEach(function (v, i) {
+                const btn = document.getElementById("trade-target-" + i);
+                if (btn) {
+                    btn.addEventListener("click", function () {
+                        tradeTarget = { userId: v.userId, name: v.name };
+                        tradeWizardStep = "offer";
+                        if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                    });
+                }
+            });
+            const cancelWizardBtn = document.getElementById("panel-trade-cancel-wizard");
+            if (cancelWizardBtn) {
+                cancelWizardBtn.addEventListener("click", function () {
+                    showTradePicker = false;
+                    if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                });
+            }
+        }
+
+        if (showTradePicker && tradeWizardStep === "offer") {
+            const offerBackBtn = document.getElementById("panel-trade-offer-back");
+            if (offerBackBtn) {
+                offerBackBtn.addEventListener("click", function () {
+                    tradeWizardStep = "target";
+                    if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                });
+            }
+            const offerNextBtn = document.getElementById("panel-trade-offer-next");
+            if (offerNextBtn) {
+                offerNextBtn.addEventListener("click", function () {
+                    const creditsInput = document.getElementById("trade-offer-credits-input");
+                    const maxPoints = typeof data.points === "number" ? data.points : 0;
+                    let credits = creditsInput ? parseInt(creditsInput.value, 10) || 0 : 0;
+                    if (credits < 0) credits = 0;
+                    if (credits > maxPoints) credits = maxPoints;
+                    tradeOfferCredits = credits;
+
+                    const items = {};
+                    const ownItemKeysForTrade = Object.keys(data.inventory || {}).filter(function (k) { return data.inventory[k] > 0; });
+                    ownItemKeysForTrade.forEach(function (fullKey, i) {
+                        const input = document.getElementById("trade-offer-qty-" + i);
+                        if (!input) return;
+                        const owned = data.inventory[fullKey];
+                        let qty = parseInt(input.value, 10) || 0;
+                        if (qty < 0) qty = 0;
+                        if (qty > owned) qty = owned;
+                        if (qty > 0) items[fullKey] = qty;
+                    });
+                    tradeOfferItems = items;
+
+                    tradeWizardStep = "request";
+                    // Item catalog is large/static - reuse the glossary cache if it's already
+                    // been loaded once this session (e.g. from opening the glossary via the
+                    // book icon), otherwise fetch it here for the first time. Same endpoint
+                    // setupItemGlossary already uses.
+                    if (itemGlossaryCache) {
+                        if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                    } else {
+                        if (lastFetchedData) renderPerpSheet(lastFetchedData); // shows "Loading item list..." immediately
+                        fetch(BACKEND_URL + "/api/item-catalog")
+                            .then(function (res) { return res.json(); })
+                            .then(function (catalogData) {
+                                itemGlossaryCache = (catalogData && catalogData.catalog) ? catalogData.catalog : {};
+                                if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                            })
+                            .catch(function (err) {
+                                console.error("item-catalog fetch failed:", err);
+                                itemGlossaryCache = {};
+                                if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                            });
+                    }
+                });
+            }
+        }
+
+        if (showTradePicker && tradeWizardStep === "request") {
+            const requestBackBtn = document.getElementById("panel-trade-request-back");
+            if (requestBackBtn) {
+                requestBackBtn.addEventListener("click", function () {
+                    tradeWizardStep = "offer";
+                    if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                });
+            }
+            const sendBtn = document.getElementById("panel-trade-send-button");
+            if (sendBtn) {
+                sendBtn.addEventListener("click", function () {
+                    sendBtn.disabled = true;
+
+                    const creditsInput = document.getElementById("trade-request-credits-input");
+                    let requestCredits = creditsInput ? parseInt(creditsInput.value, 10) || 0 : 0;
+                    if (requestCredits < 0) requestCredits = 0;
+                    tradeRequestCredits = requestCredits;
+
+                    const requestItems = {};
+                    const catalogKeysForTrade = itemGlossaryCache ? Object.keys(itemGlossaryCache).sort() : [];
+                    catalogKeysForTrade.forEach(function (fullKey, i) {
+                        const input = document.getElementById("trade-request-qty-" + i);
+                        if (!input) return;
+                        let qty = parseInt(input.value, 10) || 0;
+                        if (qty < 0) qty = 0;
+                        if (qty > 0) requestItems[fullKey] = qty;
+                    });
+                    tradeRequestItems = requestItems;
+
+                    const offerItemLines = Object.keys(tradeOfferItems).map(function (k) { return { itemKey: k, qty: tradeOfferItems[k] }; });
+                    const requestItemLines = Object.keys(tradeRequestItems).map(function (k) { return { itemKey: k, qty: tradeRequestItems[k] }; });
+
+                    queueAction("proposeTrade", {
+                        targetUserId: tradeTarget ? tradeTarget.userId : "",
+                        offerCredits: tradeOfferCredits,
+                        offerItems: offerItemLines,
+                        requestCredits: tradeRequestCredits,
+                        requestItems: requestItemLines
+                    }).then(function (ok) {
+                        showTradePicker = false;
+                        if (!ok) showQueueFailure();
+                        if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                    });
+                });
+            }
+        }
+
         const robberyCancel = document.getElementById("panel-robbery-cancel");
         if (robberyCancel) {
             robberyCancel.addEventListener("click", function () {
@@ -2505,31 +2792,30 @@
             const shopWeight = def.shopWeight || 0;
             const stealLocations = Array.isArray(def.stealLocations) ? def.stealLocations : [];
 
-            // "Where you find it" - combines the two ways an item can actually be acquired.
-            // shopWeight > 0 means Juan can stock it; stealLocations lists robbery targets it
-            // can drop from. An item with neither (shopWeight 0, no steal locations) genuinely
-            // isn't obtainable right now - said plainly rather than showing an empty line.
-            const whereParts = [];
-            if (shopWeight > 0) {
-                const priceRange = (priceMin || priceMax) ? " (" + (priceMin || 0) + "-" + (priceMax || 0) + " creds)" : "";
-                whereParts.push("Juan's Emporium" + priceRange);
-            }
-            if (stealLocations.length > 0) {
-                whereParts.push("Rob from: " + stealLocations.map(humanize).join(", "));
-            }
-            const whereText = whereParts.length > 0 ? whereParts.join(" | ") : "Not currently obtainable";
+            // Cost line only shows when Juan can actually stock it (shopWeight > 0) - just the
+            // number range now, no "Juan's Emporium" wording per the updated template.
+            const costText = (shopWeight > 0 && (priceMin || priceMax))
+                ? "Cost: " + (priceMin || 0) + "-" + (priceMax || 0) + " creds"
+                : null;
+            const robText = stealLocations.length > 0
+                ? "Rob From: " + stealLocations.map(humanize).join(", ")
+                : null;
 
             html += '<div class="glossary-item">';
+            html += '<div class="glossary-item-card">';
+            html += '<div class="glossary-item-name">' + escapeHtml(humanize(key)) + '</div>';
             html += '<div class="glossary-item-img-frame">';
             html += imageFile
                 ? '<img src="' + ITEMS_BASE_URL + '/' + encodeURIComponent(imageFile) + '" alt="' + escapeHtml(humanize(key)) + '">'
                 : '<div class="mugshot-placeholder">No image</div>';
             html += '</div>';
+            html += '<div class="glossary-item-type">' + escapeHtml(category) + '</div>';
+            html += '</div>';
             html += '<div class="glossary-item-body">';
-            html += '<div class="glossary-item-name">' + escapeHtml(humanize(key)) + '</div>';
-            html += '<div class="glossary-item-meta">' + escapeHtml(category) + '</div>';
             html += '<div class="glossary-item-desc">' + escapeHtml(description) + '</div>';
-            html += '<div class="glossary-item-where">' + escapeHtml(whereText) + '</div>';
+            if (costText) html += '<div class="glossary-item-cost">' + escapeHtml(costText) + '</div>';
+            if (robText) html += '<div class="glossary-item-where">' + escapeHtml(robText) + '</div>';
+            if (!costText && !robText) html += '<div class="glossary-item-where">Not currently obtainable</div>';
             html += '</div>';
             html += '</div>';
         });

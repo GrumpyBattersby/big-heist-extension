@@ -717,15 +717,22 @@
 
     .glossary-item {
         display: flex;
-        gap: 10px;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
         padding: 10px;
         margin-bottom: 8px;
         background: #0e2c42;
         border: 1px solid #2a5a7a;
         border-radius: 4px;
     }
+    .glossary-item-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
     .glossary-item-img-frame {
-        flex: 0 0 64px;
         width: 64px;
         height: 64px;
         display: flex;
@@ -741,23 +748,27 @@
         max-height: 100%;
     }
     .glossary-item-body {
-        flex: 1;
-        min-width: 0;
+        width: 100%;
     }
     .glossary-item-name {
         font-weight: 700;
         color: #f5c518;
-        margin-bottom: 2px;
+        text-align: center;
     }
-    .glossary-item-meta {
+    .glossary-item-type {
         font-size: 12px;
         color: #9fc8e0;
-        margin-bottom: 4px;
+        text-align: center;
     }
     .glossary-item-desc {
         font-size: 13px;
         line-height: 1.35;
         margin-bottom: 4px;
+    }
+    .glossary-item-cost {
+        font-size: 12px;
+        color: #f5c518;
+        margin-bottom: 2px;
     }
     .glossary-item-where {
         font-size: 12px;
