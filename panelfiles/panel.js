@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-07-26-generic-robbery-images");
+    console.log("BIG HEIST PANEL BUILD: 2026-07-26-getaway-item-assign");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1666,6 +1666,7 @@
                     html += '</div>';
                 });
 
+                html += '<div class="section-title">Getaway</div>';
                 if (bh.requiredVehicle) {
                     const vehicleFilled = bh.getawayVehicleName && bh.getawayVehicleName.toLowerCase() === bh.requiredVehicle.toLowerCase();
                     html += '<div class="items-text">Getaway needs: ' + humanize(bh.requiredVehicle) + (vehicleFilled ? ' (filled)' : ' (MISSING - heist will be cancelled)') + '</div>';
@@ -1674,6 +1675,28 @@
                 } else {
                     html += '<div class="items-text">No getaway vehicle committed yet - on foot without one.</div>';
                 }
+
+                // Getaway item options - same single-shared-slot pattern as a task's OPTIONAL bonus
+                // item, just heist-scoped instead of task-scoped. Any owned item with bonusRoles
+                // including "Escape" (or "ANY") qualifies here - bh.getawayOptions is computed
+                // server-side by Sync To Extension using that exact same rule, so what's offered
+                // here always matches what "!use <item> for getaway" would actually accept.
+                (bh.getawayOptions || []).forEach(function (opt, oi) {
+                    const optColorClass = opt.reusable ? 'item-reusable' : 'item-single-use';
+                    const optItemLabel = escapeHtml(humanize(opt.baseItemName));
+                    let optCell = '<span class="' + optColorClass + '">' + optItemLabel + '</span>';
+                    if (opt.filledByMe) {
+                        const removeTooltip = 'You added your ' + escapeHtml(opt.tier || '') + ' ' + optItemLabel;
+                        optCell += ' <button class="panel-inline-button" id="takegetaway-' + oi + '" title="' + removeTooltip + '">Remove</button>';
+                    } else if (opt.wouldReplace) {
+                        const replaceTooltip = 'You can upgrade this ' + escapeHtml(opt.replacingTier || '') + ' ' + optItemLabel + ' to your ' + escapeHtml(opt.tier || '') + ' item';
+                        optCell += ' <button class="panel-inline-button" id="usegetaway-' + oi + '" title="' + replaceTooltip + '">Replace</button>';
+                    } else {
+                        const useTooltip = 'You can add your ' + escapeHtml(opt.tier || '') + ' ' + optItemLabel;
+                        optCell += ' <button class="panel-inline-button" id="usegetaway-' + oi + '" title="' + useTooltip + '">Use</button>';
+                    }
+                    html += '<div class="task-row" style="justify-content:center;">' + optCell + '</div>';
+                });
 
                 if (bh.crewTogether) {
                     html += '<div class="items-text">This crew stays together on the job. <span class="item-reusable">Green</span> items can cover a task and the getaway at once, since the same item is never somewhere else. <span class="item-single-use">Yellow</span> items are still locked to wherever they\'re given.</div>';
@@ -2225,6 +2248,23 @@
                             });
                         }
                     });
+                });
+
+                (bh.getawayOptions || []).forEach(function (opt, oi) {
+                    const useGetawayBtn = document.getElementById("usegetaway-" + oi);
+                    if (useGetawayBtn) {
+                        useGetawayBtn.addEventListener("click", function () {
+                            useGetawayBtn.disabled = true;
+                            queueAction("useItem", { itemForDestination: opt.baseItemName + " for getaway" });
+                        });
+                    }
+                    const takeGetawayBtn = document.getElementById("takegetaway-" + oi);
+                    if (takeGetawayBtn) {
+                        takeGetawayBtn.addEventListener("click", function () {
+                            takeGetawayBtn.disabled = true;
+                            queueAction("takeItem", { taskKey: "getaway", slotType: "getaway" });
+                        });
+                    }
                 });
             }
         }
