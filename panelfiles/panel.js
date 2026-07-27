@@ -1762,15 +1762,13 @@
             html += '<div class="section-title">Mega-City One Creds</div>';
             html += '<div class="creds-text">' + (typeof data.points === "number" ? data.points.toLocaleString() : "0") + '</div>';
 
+            // "Heat" title line + its own underline (from .section-title's border-bottom) acts as
+            // the divider row, then PERSONAL/LOCAL sit on one inline text line beneath it - per
+            // user's exact 2-line layout request, replacing the earlier boxed heat-split-row style.
             html += '<div class="section-title">Heat</div>';
-            // Shown split rather than combined - Personal and Local (city-wide) heat are tracked
-            // and decay completely separately server-side, so folding them into one number hid
-            // which one actually mattered on a given screen (e.g. laying low only drains
-            // Personal). Same heat-split-row/heat-split-item pattern already used on the shop's
-            // heat-check screen above, for visual consistency.
             const mainPersonalHeatVal = typeof data.personalHeat === "number" ? data.personalHeat : 0;
             const mainShowHeatVal = typeof data.showHeat === "number" ? data.showHeat : 0;
-            html += '<div class="heat-split-row"><span class="heat-split-item"><span class="section-title">Personal</span><span class="creds-text">' + mainPersonalHeatVal + '</span></span><span class="heat-split-item"><span class="section-title">Local</span><span class="creds-text">' + mainShowHeatVal + '</span></span></div>';
+            html += '<div class="heat-inline-row"><span>PERSONAL: ' + mainPersonalHeatVal + '</span><span>LOCAL:' + mainShowHeatVal + '</span></div>';
 
             // Shop button hidden entirely while banned (server-tracked via shopBannedUntil for
             // heat rejections, or offendedBannedUntil for a failed haggle - both use the same
