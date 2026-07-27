@@ -29,6 +29,11 @@
     // so all six of these were silently broken images. Hosting them here instead means they also
     // survive every future panel.zip rebuild without needing to be bundled in by hand.
     const UI_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/ui";
+    // Robbery category art (bank/hardware/tech/etc backdrop shown during the robbery cinematic) -
+    // same GitHub Pages hosting as everything above. Also used to be bare filenames
+    // ("robbery-bank.png" etc) that never resolved to anything, same broken-image bug as the six
+    // UI chrome images just fixed - they'd never actually been hosted anywhere the panel could see.
+    const ROBBERY_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/robberies";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -599,14 +604,14 @@
     };
 
     const ROBBERY_CATEGORIES = [
-        { key: "cash", label: "The Bank", image: "robbery-bank.png" },
-        { key: "tools", label: "Hardware Store", image: "robbery-hardware.png" },
-        { key: "tech", label: "Tech Store", image: "robbery-tech.png" },
-        { key: "weapons", label: "Black Market Armory", image: "robbery-armory.png" },
-        { key: "explosives", label: "Construction Site", image: "robbery-construction.png" },
-        { key: "vehicle", label: "Chop Shop", image: "robbery-chopshop.png" },
-        { key: "gear", label: "Costume Shop", image: "robbery-costume.png" },
-        { key: "consumables", label: "Chemist", image: "robbery-chemist.png" }
+        { key: "cash", label: "The Bank", image: ROBBERY_BASE_URL + "/robbery-bank.png" },
+        { key: "tools", label: "Hardware Store", image: ROBBERY_BASE_URL + "/robbery-hardware.png" },
+        { key: "tech", label: "Tech Store", image: ROBBERY_BASE_URL + "/robbery-tech.png" },
+        { key: "weapons", label: "Black Market Armory", image: ROBBERY_BASE_URL + "/robbery-armory.png" },
+        { key: "explosives", label: "Construction Site", image: ROBBERY_BASE_URL + "/robbery-construction.png" },
+        { key: "vehicle", label: "Chop Shop", image: ROBBERY_BASE_URL + "/robbery-chopshop.png" },
+        { key: "gear", label: "Costume Shop", image: ROBBERY_BASE_URL + "/robbery-costume.png" },
+        { key: "consumables", label: "Chemist", image: ROBBERY_BASE_URL + "/robbery-chemist.png" }
     ];
 
     function getPickpocketCandidates(data) {
@@ -1058,8 +1063,14 @@
                 } else if (overrideMode === "robberyResult") {
                     // Location image stays up throughout the whole staged reveal, per user's
                     // spec - "clear the panel and add the image of the place up the top."
-                    topRowHtml += robberyCinematicData && robberyCinematicData.locationImage
-                        ? '<div class="juan-frame robbery-frame"><img src="' + robberyCinematicData.locationImage + '" alt="' + escapeHtml(robberyCinematicData.jobLabel || "") + '"></div>'
+                    // Streamer.bot's Robbery - Attempt sends locationImage as a bare filename
+                    // (e.g. "robbery-bank.png"), same as ROBBERY_CATEGORIES used to - resolve it
+                    // against ROBBERY_BASE_URL here rather than needing a server-side redeploy.
+                    var resolvedLocationImage = robberyCinematicData && robberyCinematicData.locationImage
+                        ? (/^https?:\/\//i.test(robberyCinematicData.locationImage) ? robberyCinematicData.locationImage : ROBBERY_BASE_URL + "/" + robberyCinematicData.locationImage)
+                        : null;
+                    topRowHtml += resolvedLocationImage
+                        ? '<div class="juan-frame robbery-frame"><img src="' + resolvedLocationImage + '" alt="' + escapeHtml(robberyCinematicData.jobLabel || "") + '"></div>'
                         : '<div class="juan-frame robbery-frame"><div class="mugshot-placeholder">' + escapeHtml((robberyCinematicData && robberyCinematicData.jobLabel) || "") + '</div></div>';
                 } else if (overrideMode === "tradeIncoming" || overrideMode === "tradeSent") {
                     // No dedicated art for this one - a plain placeholder frame is enough, same
