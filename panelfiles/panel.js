@@ -22,6 +22,13 @@
     // panel.zip), so new/updated getaway art never needs a full panel.zip re-upload. No cache-bust
     // query string, same reasoning as items/.
     const GETAWAY_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/getaways";
+    // Static UI chrome (Judge alert icon, pickpocket alert, Juan's shop/closed/finders-fee
+    // portraits, the ISOCUBE background) - same GitHub Pages hosting as items/mugshots/getaways.
+    // These used to be referenced as bare filenames (e.g. "juan-shop.png"), which only resolves if
+    // that file sits right next to panel.html wherever it's actually served from - it never did,
+    // so all six of these were silently broken images. Hosting them here instead means they also
+    // survive every future panel.zip rebuild without needing to be bundled in by hand.
+    const UI_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/ui";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -1026,8 +1033,8 @@
                 : "override-" + overrideMode;
             if (lastKnownTopRowMode !== overrideTopRowKey) {
                 const overrideImages = {
-                    shop: "juan-shop.png",
-                    findersFee: "juan-findersfee.png"
+                    shop: UI_BASE_URL + "/juan-shop.png",
+                    findersFee: UI_BASE_URL + "/juan-findersfee.png"
                     // itemInfo has no fixed Juan portrait - uses the item's own image instead,
                     // built into rest-of-content below since it's item-specific, not static.
                 };
@@ -1043,11 +1050,11 @@
                         : '<div class="mugshot-placeholder">No image yet</div>';
                     topRowHtml += '</div>';
                 } else if (overrideMode === "oiWarning") {
-                    topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="pickpocket-alert.png" alt="Pickpocket in progress"></div>';
+                    topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/pickpocket-alert.png" alt="Pickpocket in progress"></div>';
                 } else if (overrideMode === "arrestAlert") {
-                    topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple judge-alert-yellow-border"><img src="judge-icon.png" alt="Judge alert"></div>';
+                    topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge alert"></div>';
                 } else if (overrideMode === "heatDenied" || overrideMode === "offendedDenied") {
-                    topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="juan-closed.png" alt="Turned away"></div>';
+                    topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/juan-closed.png" alt="Turned away"></div>';
                 } else if (overrideMode === "robberyResult") {
                     // Location image stays up throughout the whole staged reveal, per user's
                     // spec - "clear the panel and add the image of the place up the top."
@@ -1086,7 +1093,7 @@
             if (lastKnownTopRowMode !== "client-finder") {
                 let topRowHtml = '<div class="stacked-panel">';
                 topRowHtml += '<div id="name-status-area"></div>';
-                topRowHtml += '<div class="juan-frame"><img src="juan-shop.png" alt="Juan\'s Emporium"></div>';
+                topRowHtml += '<div class="juan-frame"><img src="' + UI_BASE_URL + '/juan-shop.png" alt="Juan\'s Emporium"></div>';
                 topRowHtml += '</div>';
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
@@ -1098,7 +1105,7 @@
             if (lastKnownTopRowMode !== "client-shop-pending") {
                 let topRowHtml = '<div class="stacked-panel">';
                 topRowHtml += '<div id="name-status-area"></div>';
-                topRowHtml += '<div class="juan-frame"><img src="juan-shop.png" alt="Juan\'s Emporium"></div>';
+                topRowHtml += '<div class="juan-frame"><img src="' + UI_BASE_URL + '/juan-shop.png" alt="Juan\'s Emporium"></div>';
                 topRowHtml += '</div>';
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
@@ -1114,7 +1121,7 @@
             if (lastKnownTopRowMode !== "client-shop") {
                 let topRowHtml = '<div class="stacked-panel">';
                 topRowHtml += '<div id="name-status-area"></div>';
-                topRowHtml += '<div class="juan-frame"><img src="juan-shop.png" alt="Juan\'s Emporium"></div>';
+                topRowHtml += '<div class="juan-frame"><img src="' + UI_BASE_URL + '/juan-shop.png" alt="Juan\'s Emporium"></div>';
                 topRowHtml += '</div>';
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
@@ -1128,7 +1135,7 @@
                 let topRowHtml = '<div class="stacked-panel">';
                 topRowHtml += '<div id="name-status-area"></div>';
                 topRowHtml += '<div class="isocube-frame" id="isocube-frame">';
-                topRowHtml += '<img src="isocube.png" alt="ISOCUBE">';
+                topRowHtml += '<img src="' + UI_BASE_URL + '/isocube.png" alt="ISOCUBE">';
                 topRowHtml += '<div class="isocube-name" id="isocube-name" style="font-size:' + isoCubeNameFontSize(data.name) + 'px">' + escapeHtml(data.name) + '</div>';
                 topRowHtml += '<div class="isocube-digit isocube-digit-hours" id="isocube-hours">00</div>';
                 topRowHtml += '<div class="isocube-digit isocube-digit-minutes" id="isocube-minutes">00</div>';
