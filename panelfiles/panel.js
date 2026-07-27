@@ -1893,14 +1893,16 @@
         }
 
         if (hasFreshNotice) {
-            // Popup of what got stolen, same idea as Robbery - Attempt's stolen-item popup -
-            // pickpocketing only ever nets cash though (no physical item), so this always shows
-            // the same generic creds art (robbery-bank.png - confirmed by user to be generic
-            // "creds" art, not a literal bank), only set server-side on an actual successful theft.
-            var noticeImageHtml = data.pickpocketNotice.imageFile
-                ? '<div class="juan-frame item-info-frame"><img src="' + ROBBERY_BASE_URL + '/' + encodeURIComponent(data.pickpocketNotice.imageFile) + '" alt="Stolen creds"></div>'
+            // Small icon shown inline next to the notice text (not a big standalone frame above
+            // it) - same idea as Robbery - Attempt's stolen-item popup, but pickpocketing only
+            // ever nets cash (no physical item), so this always shows the same generic creds art
+            // (robbery-bank.png - confirmed by user to be generic "creds" art, not a literal
+            // bank), only set server-side on an actual successful theft.
+            var noticeImgHtml = data.pickpocketNotice.imageFile
+                ? '<img class="notice-inline-img" src="' + ROBBERY_BASE_URL + '/' + encodeURIComponent(data.pickpocketNotice.imageFile) + '" alt="Stolen creds">'
                 : '';
-            html = noticeImageHtml + '<div class="juan-quote">' + escapeHtml(data.pickpocketNotice.message) + '</div>' + html;
+            var noticeRowClass = data.pickpocketNotice.imageFile ? 'juan-quote notice-with-image' : 'juan-quote';
+            html = '<div class="' + noticeRowClass + '">' + noticeImgHtml + '<span>' + escapeHtml(data.pickpocketNotice.message) + '</span></div>' + html;
         }
 
         document.getElementById("rest-of-content").innerHTML = html;
