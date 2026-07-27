@@ -1034,7 +1034,10 @@
             const overrideTopRowKey = overrideMode === "itemInfo"
                 ? "override-itemInfo-" + (data.panelOverride.itemName || "") + "-" + (data.panelOverride.imageFile || "")
                 : overrideMode === "robberyResult"
-                ? "override-robberyResult-" + robberyCinematicKey
+                // Includes the stage now (not just robberyCinematicKey) - the stolen-item popup
+                // only shows once the reveal reaches its final stage, so the top row needs a
+                // rebuild at that transition too, not just once at the very start of the job.
+                ? "override-robberyResult-" + robberyCinematicKey + "-" + robberyCinematicStage
                 : "override-" + overrideMode;
             if (lastKnownTopRowMode !== overrideTopRowKey) {
                 const overrideImages = {
@@ -1061,17 +1064,29 @@
                 } else if (overrideMode === "heatDenied" || overrideMode === "offendedDenied") {
                     topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/juan-closed.png" alt="Turned away"></div>';
                 } else if (overrideMode === "robberyResult") {
-                    // Location image stays up throughout the whole staged reveal, per user's
-                    // spec - "clear the panel and add the image of the place up the top."
+                    // Location image stays up for the first part of the staged reveal, per user's
+                    // original spec - "clear the panel and add the image of the place up the top."
                     // Streamer.bot's Robbery - Attempt sends locationImage as a bare filename
                     // (e.g. "robbery-bank.png"), same as ROBBERY_CATEGORIES used to - resolve it
                     // against ROBBERY_BASE_URL here rather than needing a server-side redeploy.
-                    var resolvedLocationImage = robberyCinematicData && robberyCinematicData.locationImage
-                        ? (/^https?:\/\//i.test(robberyCinematicData.locationImage) ? robberyCinematicData.locationImage : ROBBERY_BASE_URL + "/" + robberyCinematicData.locationImage)
+                    //
+                    // Once the reveal reaches its final stage (loot is known), swap to a popup of
+                    // the actual item stolen - per user's follow-up request. Robbery - Attempt only
+                    // sets stolenItemImage on an item haul, not a cash-only job, so cash jobs keep
+                    // showing the location image throughout (no picturable "item" to pop up there).
+                    var rdForImage = robberyCinematicData || {};
+                    var showStolenItem = robberyCinematicStage >= 4 && rdForImage.stolenItemImage;
+                    var resolvedLocationImage = rdForImage.locationImage
+                        ? (/^https?:\/\//i.test(rdForImage.locationImage) ? rdForImage.locationImage : ROBBERY_BASE_URL + "/" + rdForImage.locationImage)
                         : null;
-                    topRowHtml += resolvedLocationImage
-                        ? '<div class="juan-frame robbery-frame"><img src="' + resolvedLocationImage + '" alt="' + escapeHtml(robberyCinematicData.jobLabel || "") + '"></div>'
-                        : '<div class="juan-frame robbery-frame"><div class="mugshot-placeholder">' + escapeHtml((robberyCinematicData && robberyCinematicData.jobLabel) || "") + '</div></div>';
+
+                    if (showStolenItem) {
+                        topRowHtml += '<div class="juan-frame item-info-frame robbery-frame"><img src="' + ITEMS_BASE_URL + '/' + encodeURIComponent(rdForImage.stolenItemImage) + '" alt="Stolen: ' + escapeHtml(rdForImage.jobLabel || "") + '"></div>';
+                    } else {
+                        topRowHtml += resolvedLocationImage
+                            ? '<div class="juan-frame robbery-frame"><img src="' + resolvedLocationImage + '" alt="' + escapeHtml(rdForImage.jobLabel || "") + '"></div>'
+                            : '<div class="juan-frame robbery-frame"><div class="mugshot-placeholder">' + escapeHtml(rdForImage.jobLabel || "") + '</div></div>';
+                    }
                 } else if (overrideMode === "tradeIncoming" || overrideMode === "tradeSent") {
                     // No dedicated art for this one - a plain placeholder frame is enough, same
                     // treatment as the "no image yet" itemInfo fallback.
