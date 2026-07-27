@@ -1795,12 +1795,14 @@
             html += '<div class="section-title">Mega-City One Creds</div>';
             html += '<div class="creds-text">' + (typeof data.points === "number" ? data.points.toLocaleString() : "0") + '</div>';
 
-            // "Heat" title line + its own underline (from .section-title's border-bottom) acts as
-            // the divider row, then PERSONAL/LOCAL sit on one inline text line beneath it - per
-            // user's exact 2-line layout request, replacing the earlier boxed heat-split-row style.
-            html += '<div class="section-title">Heat</div>';
+            // "Heat" title line (now with the combined total on the right of that same line) + its
+            // own underline (from .section-title's border-bottom) acts as the divider row, then
+            // PERSONAL/LOCAL sit on one inline text line beneath it - per user's exact 2-line
+            // layout request (HEAT + total / divider / PERSONAL & LOCAL).
             const mainPersonalHeatVal = typeof data.personalHeat === "number" ? data.personalHeat : 0;
             const mainShowHeatVal = typeof data.showHeat === "number" ? data.showHeat : 0;
+            const mainTotalHeatVal = mainPersonalHeatVal + mainShowHeatVal;
+            html += '<div class="section-title heat-title-row"><span>Heat</span><span>' + mainTotalHeatVal + '</span></div>';
             html += '<div class="heat-inline-row"><span>PERSONAL: ' + mainPersonalHeatVal + '</span><span>LOCAL:' + mainShowHeatVal + '</span></div>';
 
             // Shop button hidden entirely while banned (server-tracked via shopBannedUntil for
