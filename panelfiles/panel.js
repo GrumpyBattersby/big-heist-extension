@@ -1258,9 +1258,6 @@
             // under the portrait above, built into the top-row markup.
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
             nameStatusHtml += '<div class="status-badge status-judge-duty">ON DUTY</div>';
-        } else if (isPlayingPerpScreen) {
-            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
-            nameStatusHtml += '<div class="status-badge status-judge-duty">ON THE JOB</div>';
         } else if (overrideMode === "shop") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' arrives at...</div>';
             nameStatusHtml += '<div class="flavor-text">Juan\'s Emporium</div>';
@@ -1367,11 +1364,6 @@
             } else {
                 html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
             }
-        } else if (isPlayingPerpScreen) {
-            // No button here - the perp is the TARGET, not the one acting. Their own screen is
-            // just their portrait/name; the arrest-vs-distract race plays out on the Judges' and
-            // watching perps' panels instead.
-            html += '<div class="items-text">Out in the open and on the job. Keep your head down.</div>';
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
             const perpName = escapeHtml(rd.perpName || data.name || "");
