@@ -1070,7 +1070,14 @@
                     }, CANDIDATE_INITIAL_WAIT_MS);
                 }
             }
-        } else if (overrideMode && !(overrideMode === "robberyResult" && robberyResultDismissed)) {
+        } else if (overrideMode && overrideMode !== "arrestAlert" && overrideMode !== "distractAlert" && !(overrideMode === "robberyResult" && robberyResultDismissed)) {
+            // arrestAlert/distractAlert are deliberately excluded from this generic override-art
+            // top-row (falls through to the normal mugshot/status branch further down instead) -
+            // per the user's explicit request: a watching Judge/perp should still see THEIR OWN
+            // character up top even while the alert is live, exactly like a playing Judge already
+            // does (see the "Own portrait always wins" comment above) - only the description and
+            // button underneath change. Previously this showed a generic judge-icon.png/DISTRACT
+            // placeholder instead, replacing their own mugshot entirely.
             // Only rebuild on an actual transition, tracked as "override-<mode>" for shop/
             // findersFee (their Juan portraits are static assets that never change, so no reason
             // to reload them) - but for itemInfo specifically, the key ALSO includes the item name
@@ -1107,12 +1114,6 @@
                     topRowHtml += '</div>';
                 } else if (overrideMode === "oiWarning") {
                     topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/pickpocket-alert.png" alt="Pickpocket in progress"></div>';
-                } else if (overrideMode === "arrestAlert") {
-                    topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge alert"></div>';
-                } else if (overrideMode === "distractAlert") {
-                    // No dedicated art yet - plain placeholder frame, same treatment as tradeIncoming
-                    // below, until there's a real DISTRACT icon to host.
-                    topRowHtml += '<div class="juan-frame alert-frame-purple"><div class="mugshot-placeholder">DISTRACT</div></div>';
                 } else if (overrideMode === "heatDenied" || overrideMode === "offendedDenied") {
                     topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/juan-closed.png" alt="Turned away"></div>';
                 } else if (overrideMode === "robberyResult") {
