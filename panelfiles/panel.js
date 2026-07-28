@@ -38,6 +38,11 @@
     // same GitHub Pages hosting pattern as everything above. Filenames match the short name half
     // of assignedJudgeName exactly (e.g. "Judge Kee" -> "Kee Panel Image.png").
     const JUDGES_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/judges";
+    // Perp/crew character portraits - same idea as JUDGES_BASE_URL, for the criminal side of the
+    // RPG (Quin, Flink). Filenames match assignedPerpName exactly (e.g. "Quin" -> "Quin Panel
+    // Image.png"). Folder deliberately NOT named "perps" - that already means something else
+    // (per-userId arrest cube mugshots) elsewhere in this codebase.
+    const PERPS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/crew-characters";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -712,6 +717,9 @@
         // condition goes away - unassigned, or their character steps out of the scene - reverting
         // them to their normal own character sheet with no special handling needed.
         const isPlayingJudgeScreen = !!(data.assignedJudgeName && data.judgeIsPlaying);
+        // Same idea, for the criminal side of the RPG - a playing Quin/Flink gets their own
+        // portrait+name screen too, per the user's "similar panel" request.
+        const isPlayingPerpScreen = !!(data.assignedPerpName && data.perpIsPlaying);
 
         // The backend only ever re-checks an override's expiresAt when Sync To Extension happens
         // to run again for some OTHER reason (a purchase, a crime, anything) - if nothing else
@@ -991,6 +999,18 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = judgeTopKey;
             }
+        } else if (isPlayingPerpScreen) {
+            const perpTopKey = "perp-screen-" + data.assignedPerpName;
+            if (lastKnownTopRowMode !== perpTopKey) {
+                let topRowHtml = '<div class="stacked-panel">';
+                topRowHtml += '<div id="name-status-area"></div>';
+                topRowHtml += '<div class="juan-frame judge-portrait-frame"><img src="' + PERPS_BASE_URL + '/' + encodeURIComponent(data.assignedPerpName + ' Panel Image.png') + '" alt="' + escapeHtml(data.assignedPerpName) + '"></div>';
+                topRowHtml += '<div class="judge-name-title">' + escapeHtml(data.assignedPerpName) + '</div>';
+                topRowHtml += '</div>';
+
+                document.getElementById("top-row").innerHTML = topRowHtml;
+                lastKnownTopRowMode = perpTopKey;
+            }
         } else if (isPending) {
             // Only rebuild the candidates skeleton on the actual transition INTO pending, not
             // every 15s poll while still pending - rebuilding every poll would wipe out an
@@ -1089,6 +1109,10 @@
                     topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/pickpocket-alert.png" alt="Pickpocket in progress"></div>';
                 } else if (overrideMode === "arrestAlert") {
                     topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge alert"></div>';
+                } else if (overrideMode === "distractAlert") {
+                    // No dedicated art yet - plain placeholder frame, same treatment as tradeIncoming
+                    // below, until there's a real DISTRACT icon to host.
+                    topRowHtml += '<div class="juan-frame alert-frame-purple"><div class="mugshot-placeholder">DISTRACT</div></div>';
                 } else if (overrideMode === "heatDenied" || overrideMode === "offendedDenied") {
                     topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/juan-closed.png" alt="Turned away"></div>';
                 } else if (overrideMode === "robberyResult") {
@@ -1234,6 +1258,9 @@
             // under the portrait above, built into the top-row markup.
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
             nameStatusHtml += '<div class="status-badge status-judge-duty">ON DUTY</div>';
+        } else if (isPlayingPerpScreen) {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
+            nameStatusHtml += '<div class="status-badge status-judge-duty">ON THE JOB</div>';
         } else if (overrideMode === "shop") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' arrives at...</div>';
             nameStatusHtml += '<div class="flavor-text">Juan\'s Emporium</div>';
@@ -1245,6 +1272,8 @@
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' feels a hand in their pocket!</div>';
         } else if (overrideMode === "arrestAlert") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ', a crime has been reported...</div>';
+        } else if (overrideMode === "distractAlert") {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' spots a chance to help...</div>';
         } else if (overrideMode === "heatDenied") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' is turned away at the door...</div>';
         } else if (overrideMode === "offendedDenied") {
@@ -1338,6 +1367,11 @@
             } else {
                 html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
             }
+        } else if (isPlayingPerpScreen) {
+            // No button here - the perp is the TARGET, not the one acting. Their own screen is
+            // just their portrait/name; the arrest-vs-distract race plays out on the Judges' and
+            // watching perps' panels instead.
+            html += '<div class="items-text">Out in the open and on the job. Keep your head down.</div>';
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
             const perpName = escapeHtml(rd.perpName || data.name || "");
@@ -1415,6 +1449,11 @@
             html += '<div class="section-title">Crime In Progress</div>';
             html += '<div class="items-text">' + escapeHtml(ov.perpName || "Someone") + ' has been spotted mid-' + escapeHtml(ov.crimeType || "crime") + '. Move fast if you want to make the arrest.</div>';
             html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
+        } else if (overrideMode === "distractAlert") {
+            const ov = data.panelOverride || {};
+            html += '<div class="section-title">Judges Closing In</div>';
+            html += '<div class="items-text">' + escapeHtml(ov.perpName || "Someone") + ' is about to get nabbed. Create a diversion?</div>';
+            html += '<button class="panel-urgent-button" id="panel-distract-button">DISTRACT</button>';
         } else if (overrideMode === "heatDenied") {
             const heatSource = (data.panelOverride && data.panelOverride.heatSource) || "personal";
             html += '<div class="section-title">Turned Away</div>';
@@ -2007,6 +2046,16 @@
                 arrestButton.disabled = true;
                 const ov = data.panelOverride || {};
                 queueAction("confirmArrest", { perpId: ov.perpId || "", perpName: ov.perpName || "", severity: ov.severity || "minor" });
+                queueAction("clearOverride", {});
+            });
+        }
+
+        const distractButton = document.getElementById("panel-distract-button");
+        if (distractButton) {
+            distractButton.addEventListener("click", function () {
+                distractButton.disabled = true;
+                const ov = data.panelOverride || {};
+                queueAction("confirmDistract", { perpId: ov.perpId || "", perpName: ov.perpName || "" });
                 queueAction("clearOverride", {});
             });
         }
