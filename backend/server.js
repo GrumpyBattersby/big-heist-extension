@@ -79,7 +79,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice, bagmanResultNotice, heistRunning, assignedJudgeName, judgeIsPlaying, assignedPerpName, perpIsPlaying } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice, bagmanResultNotice, heistRunning, assignedJudgeName, judgeIsPlaying, isWatchingJudge, assignedPerpName, perpIsPlaying } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -134,6 +134,9 @@ app.post('/api/push-data', (req, res) => {
         // by Sync To Extension on every push.
         assignedJudgeName: assignedJudgeName || null,
         judgeIsPlaying: !!judgeIsPlaying,
+        // True for a registered Judges-group member who ISN'T the one currently playing - still
+        // gets the Judge-styled panel, just not a specific character's portrait.
+        isWatchingJudge: !!isWatchingJudge,
         // Same idea, for the criminal side of the RPG (Quin, Flink).
         assignedPerpName: assignedPerpName || null,
         perpIsPlaying: !!perpIsPlaying,
@@ -371,6 +374,7 @@ app.get('/api/my-data', (req, res) => {
         heatReducingItems: perpData.heatReducingItems || {},
         assignedJudgeName: perpData.assignedJudgeName || null,
         judgeIsPlaying: !!perpData.judgeIsPlaying,
+        isWatchingJudge: !!perpData.isWatchingJudge,
         assignedPerpName: perpData.assignedPerpName || null,
         perpIsPlaying: !!perpData.perpIsPlaying,
         presentViewers: presentViewers,

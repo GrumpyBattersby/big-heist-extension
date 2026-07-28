@@ -717,6 +717,11 @@
         // condition goes away - unassigned, or their character steps out of the scene - reverting
         // them to their normal own character sheet with no special handling needed.
         const isPlayingJudgeScreen = !!(data.assignedJudgeName && data.judgeIsPlaying);
+        // A registered Judges-group member who ISN'T the one currently playing still gets the
+        // Judge-styled panel (per the user's explicit request - "should look like the Judge
+        // panel") rather than their own personal mugshot. Always false while isPlayingJudgeScreen
+        // is true (Sync To Extension guarantees the two are mutually exclusive server-side).
+        const isWatchingJudgeScreen = !!data.isWatchingJudge;
         // Same idea, for the criminal side of the RPG - a playing Quin/Flink gets their own
         // portrait+name screen too, per the user's "similar panel" request.
         const isPlayingPerpScreen = !!(data.assignedPerpName && data.perpIsPlaying);
@@ -999,6 +1004,22 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = judgeTopKey;
             }
+        } else if (isWatchingJudgeScreen) {
+            // No specific RPG character assigned (that's what makes them "watching" rather than
+            // "playing"), so no per-character portrait to show - a generic Judge badge instead,
+            // same judge-icon.png the arrest alert used to show, just now the account's permanent
+            // look while they're a registered watching Judge rather than a one-off alert graphic.
+            const watchTopKey = "judge-watching-" + data.name;
+            if (lastKnownTopRowMode !== watchTopKey) {
+                let topRowHtml = '<div class="stacked-panel">';
+                topRowHtml += '<div id="name-status-area"></div>';
+                topRowHtml += '<div class="juan-frame judge-portrait-frame judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge"></div>';
+                topRowHtml += '<div class="judge-name-title">JUDGE ' + escapeHtml(data.name).toUpperCase() + '</div>';
+                topRowHtml += '</div>';
+
+                document.getElementById("top-row").innerHTML = topRowHtml;
+                lastKnownTopRowMode = watchTopKey;
+            }
         } else if (isPlayingPerpScreen) {
             const perpTopKey = "perp-screen-" + data.assignedPerpName;
             if (lastKnownTopRowMode !== perpTopKey) {
@@ -1259,6 +1280,9 @@
             // under the portrait above, built into the top-row markup.
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
             nameStatusHtml += '<div class="status-badge status-judge-duty">ON DUTY</div>';
+        } else if (isWatchingJudgeScreen) {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
+            nameStatusHtml += '<div class="status-badge status-judge-duty">WATCHING</div>';
         } else if (overrideMode === "shop") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' arrives at...</div>';
             nameStatusHtml += '<div class="flavor-text">Juan\'s Emporium</div>';
@@ -1364,6 +1388,18 @@
                 html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
             } else {
                 html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
+            }
+        } else if (isWatchingJudgeScreen) {
+            // Same ARREST mechanic as the playing-Judge branch above, just different flavor text
+            // underneath - a watching Judge is racing to steal the arrest rather than getting
+            // first dibs on it.
+            if (overrideMode === "arrestAlert") {
+                const ov = data.panelOverride || {};
+                html += '<div class="section-title">Crime In Progress</div>';
+                html += '<div class="items-text">' + escapeHtml(ov.perpName || "Someone") + ' has been spotted mid-' + escapeHtml(ov.crimeType || "crime") + '. Move fast if you want to steal the arrest.</div>';
+                html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
+            } else {
+                html += '<div class="items-text">Watching the scene from elsewhere. If another Judge gets first dibs on an arrest, you could still steal it.</div>';
             }
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
