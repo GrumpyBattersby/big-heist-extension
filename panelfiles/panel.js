@@ -1391,15 +1391,16 @@
             }
         } else if (isWatchingJudgeScreen) {
             // Same ARREST mechanic as the playing-Judge branch above, just different flavor text
-            // underneath - a watching Judge is racing to steal the arrest rather than getting
-            // first dibs on it.
+            // underneath. Deliberately avoids "steal" language - a watching Judge isn't taking an
+            // arrest away from a Judge who already made it, they're just getting their own shot
+            // at it once the RPG Judge's 10-second head start runs out without a result.
             if (overrideMode === "arrestAlert") {
                 const ov = data.panelOverride || {};
                 html += '<div class="section-title">Crime In Progress</div>';
-                html += '<div class="items-text">' + escapeHtml(ov.perpName || "Someone") + ' has been spotted mid-' + escapeHtml(ov.crimeType || "crime") + '. Move fast if you want to steal the arrest.</div>';
+                html += '<div class="items-text">' + escapeHtml(ov.perpName || "Someone") + ' has been spotted mid-' + escapeHtml(ov.crimeType || "crime") + '. Move fast if you want to make the arrest.</div>';
                 html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
             } else {
-                html += '<div class="items-text">Watching the scene from elsewhere. If another Judge gets first dibs on an arrest, you could still steal it.</div>';
+                html += '<div class="items-text">Watching the scene from elsewhere. If the Judge on the case hasn\'t made the arrest within the first 10 seconds, you\'ll get your own shot at it.</div>';
             }
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
