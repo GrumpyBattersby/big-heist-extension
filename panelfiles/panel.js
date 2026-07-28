@@ -34,6 +34,10 @@
     // ("robbery-bank.png" etc) that never resolved to anything, same broken-image bug as the six
     // UI chrome images just fixed - they'd never actually been hosted anywhere the panel could see.
     const ROBBERY_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/robberies";
+    // Judge character portraits ("<name> Panel Image.png") for the dedicated Judge Home Screen -
+    // same GitHub Pages hosting pattern as everything above. Filenames match the short name half
+    // of assignedJudgeName exactly (e.g. "Judge Kee" -> "Kee Panel Image.png").
+    const JUDGES_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/judges";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -701,6 +705,14 @@
 
         const isPending = !!data.pendingMugshotPick;
 
+        // Dedicated Judge Home Screen - shown instead of the normal crime-game sheet whenever this
+        // account is assigned to a Judge character (via the streamer's Stream Deck Assign Judge
+        // flow) AND that character is currently on screen (Sync To Extension checks OBS visibility
+        // the same way Judge selection already does elsewhere). Stops applying the instant either
+        // condition goes away - unassigned, or their character steps out of the scene - reverting
+        // them to their normal own character sheet with no special handling needed.
+        const isPlayingJudgeScreen = !!(data.assignedJudgeName && data.judgeIsPlaying);
+
         // The backend only ever re-checks an override's expiresAt when Sync To Extension happens
         // to run again for some OTHER reason (a purchase, a crime, anything) - if nothing else
         // triggers a sync, the 5-minute timer never actually gets re-validated server-side and the
@@ -963,7 +975,23 @@
             return;
         }
 
-        if (isPending) {
+        if (isPlayingJudgeScreen) {
+            // Own portrait always wins over the generic judge-icon.png alert graphic - a playing
+            // Judge sees THEIR OWN character even while an arrest alert is live for them, per the
+            // user's exact request ("The arrest button would come under that [picture+name]").
+            const judgeTopKey = "judge-screen-" + data.assignedJudgeName;
+            if (lastKnownTopRowMode !== judgeTopKey) {
+                const judgeShortName = data.assignedJudgeName.replace(/^Judge\s+/i, '');
+                let topRowHtml = '<div class="stacked-panel">';
+                topRowHtml += '<div id="name-status-area"></div>';
+                topRowHtml += '<div class="juan-frame judge-portrait-frame"><img src="' + JUDGES_BASE_URL + '/' + encodeURIComponent(judgeShortName + ' Panel Image.png') + '" alt="' + escapeHtml(data.assignedJudgeName) + '"></div>';
+                topRowHtml += '<div class="judge-name-title">' + escapeHtml(data.assignedJudgeName) + '</div>';
+                topRowHtml += '</div>';
+
+                document.getElementById("top-row").innerHTML = topRowHtml;
+                lastKnownTopRowMode = judgeTopKey;
+            }
+        } else if (isPending) {
             // Only rebuild the candidates skeleton on the actual transition INTO pending, not
             // every 15s poll while still pending - rebuilding every poll would wipe out an
             // already-successfully-loaded image (hiding it again via the blank img/display:none
@@ -1200,7 +1228,13 @@
         // shows contextual flavor text instead.
         let nameStatusHtml;
 
-        if (overrideMode === "shop") {
+        if (isPlayingJudgeScreen) {
+            // Real account name + an ON DUTY badge instead of the crime-game WANTED/CITIZEN status
+            // badge, which has no meaning for a Judge - the RPG character name itself already sits
+            // under the portrait above, built into the top-row markup.
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
+            nameStatusHtml += '<div class="status-badge status-judge-duty">ON DUTY</div>';
+        } else if (overrideMode === "shop") {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' arrives at...</div>';
             nameStatusHtml += '<div class="flavor-text">Juan\'s Emporium</div>';
         } else if (overrideMode === "findersFee") {
@@ -1291,7 +1325,20 @@
 
         let html = '';
 
-        if (overrideMode === "robberyResult" && !robberyResultDismissed) {
+        if (isPlayingJudgeScreen) {
+            // Takes over the whole bottom content area too, same as every other dedicated screen
+            // in this function - a playing Judge never sees the normal crime-economy sections
+            // (shop/heat/inventory/etc), only their own duty status and, when relevant, the arrest
+            // button for whatever's currently been flagged to them.
+            if (overrideMode === "arrestAlert") {
+                const ov = data.panelOverride || {};
+                html += '<div class="section-title">Crime In Progress</div>';
+                html += '<div class="items-text">' + escapeHtml(ov.perpName || "Someone") + ' has been spotted mid-' + escapeHtml(ov.crimeType || "crime") + '. Move fast if you want to make the arrest.</div>';
+                html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
+            } else {
+                html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
+            }
+        } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
             const perpName = escapeHtml(rd.perpName || data.name || "");
             const jobLabel = escapeHtml(rd.jobLabel || "somewhere");
