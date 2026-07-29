@@ -1955,6 +1955,14 @@
             // have a location for it simply doesn't show a button, same as it's rejected
             // server-side in Robbery - Attempt if somehow triggered anyway.
             html += '<div class="section-title">Pick a Job</div>';
+            // Per the user's request - shows which Block the player is currently in, so a
+            // WatchingPerp/mimicked viewer can confirm their panel is actually linked to the same
+            // RPG Perp/Block they're watching on stream, rather than a stale or mismatched one.
+            // currentBlockInfo.block is already fetched (fetchCurrentBlock()) for the category
+            // list/labels above - this just also surfaces it visibly instead of using it silently.
+            if (currentBlockInfo && currentBlockInfo.block) {
+                html += '<div class="items-text current-block-label">Block: <span class="creds-text">' + escapeHtml(currentBlockInfo.block) + '</span></div>';
+            }
             const availableRobberyCategories = getAvailableRobberyCategories();
             if (availableRobberyCategories.length === 0) {
                 html += '<div class="items-text">Nothing worth robbing in this Block right now - try again once the team moves on.</div>';
