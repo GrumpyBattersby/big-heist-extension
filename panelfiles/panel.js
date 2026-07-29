@@ -1016,6 +1016,21 @@
             return;
         }
 
+        // Any dedicated gameplay screen that should take priority over a playing/watching RPG
+        // Perp's static portrait - jail/isocube, robbery (pending or the result cinematic),
+        // pickpocket-pending, and now EVERY Juan's Emporium-related state (shop browser, finder,
+        // item info, oi-warning, heat/offended denial, trade, shop entry pending) - covers the
+        // exact same reported bug ("Juan's images don't show up, it sticks on the RPG perp
+        // image") that was already fixed once for robbery/jail/pickpocket but missed the Juan's
+        // flows entirely, since they all route through the generic overrideMode branch further
+        // down. Deliberately EXCLUDES arrestAlert/distractAlert - the own-portrait-always-wins
+        // rule established for Judges applies here too (a playing Perp being targeted by the
+        // perp-game ARREST-vs-DISTRACT race still shows their own portrait with the button
+        // underneath, not a generic alert graphic).
+        const perpPortraitYieldsToOtherScreen = stillJailed || robberyPending || pickpocketPending
+            || showFinderPage || shopEntryPending || showShopBrowser
+            || (overrideMode && overrideMode !== "arrestAlert" && overrideMode !== "distractAlert");
+
         if (isPlayingJudgeScreen) {
             // Own portrait always wins over the generic judge-icon.png alert graphic - a playing
             // Judge sees THEIR OWN character even while an arrest alert is live for them, per the
@@ -1057,7 +1072,7 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = watchTopKey;
             }
-        } else if (isPlayingPerpScreen && !stillJailed && !robberyPending && !pickpocketPending && overrideMode !== "robberyResult") {
+        } else if (isPlayingPerpScreen && !perpPortraitYieldsToOtherScreen) {
             // Deliberately yields to the robbery cinematic/pending screens and the jail/isocube
             // screen below - those are dedicated gameplay visuals, not a generic alert graphic
             // like arrestAlert/distractAlert (where the own-portrait-always-wins rule from the
@@ -1076,7 +1091,7 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = perpTopKey;
             }
-        } else if (isWatchingPerpScreen && !stillJailed && !robberyPending && !pickpocketPending && overrideMode !== "robberyResult") {
+        } else if (isWatchingPerpScreen && !perpPortraitYieldsToOtherScreen) {
             // Same portrait as the playing-perp branch above - just not currently "on" (no OBS
             // bypass in play), so no ON-DUTY-style framing needed here, the normal WANTED/CITIZEN
             // status badge below still applies as usual. Same robbery/jail exclusions as above,
