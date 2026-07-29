@@ -43,6 +43,16 @@
     // Image.png"). Folder deliberately NOT named "perps" - that already means something else
     // (per-userId arrest cube mugshots) elsewhere in this codebase.
     const PERPS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/crew-characters";
+    // Big Heist banner art (one per heistKey) and crew logos - same GitHub Pages hosting pattern
+    // as everything above. These were ALSO still bare filenames (e.g. "heist-highsociety.png",
+    // "ferocious-flapjack.png") with no base URL prefix - the exact same broken-image bug already
+    // fixed for UI_BASE_URL/ROBBERY_BASE_URL above, just never caught here since nobody had
+    // reached the Big Heist screen with a live heist/crew until now. NOTE: as of this fix, no
+    // actual banner/logo image files exist yet in these folders on GitHub Pages - the HTML now
+    // resolves to a real, well-formed URL instead of a broken relative path, but every one of
+    // them will still 404 (broken image icon) until real art is uploaded per heist/crew name.
+    const HEISTS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/heists";
+    const CREWS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/crews";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -1732,7 +1742,11 @@
             html += '<div class="section-title">The Big Heist</div>';
 
             if (bh && bh.heistKey && HEIST_IMAGES[bh.heistKey]) {
-                html += '<div class="heist-banner-frame"><img src="' + HEIST_IMAGES[bh.heistKey] + '" alt="' + escapeHtml(bh.heistName || '') + '"></div>';
+                // No heist banner art actually exists on GitHub Pages yet as of this fix - until
+                // it does, every one of these 404s. onerror hides the whole frame instead of
+                // showing the browser's broken-image icon, so it degrades to "no banner" rather
+                // than "visibly broken" in the meantime.
+                html += '<div class="heist-banner-frame"><img src="' + HEISTS_BASE_URL + '/' + HEIST_IMAGES[bh.heistKey] + '" alt="' + escapeHtml(bh.heistName || '') + '" onerror="this.parentElement.style.display=\'none\';"></div>';
             }
 
             if (!bh) {
@@ -1747,7 +1761,9 @@
                     const logoFile = CREW_LOGOS[bh.crewName];
                     html += '<div class="section-title" style="text-align:center;">' + escapeHtml(bh.crewName) + '</div>';
                     if (logoFile) {
-                        html += '<div class="juan-frame robbery-frame" style="margin:0 auto;"><img src="' + logoFile + '" alt="' + escapeHtml(bh.crewName) + '"></div>';
+                        // Same "no crew logo art exists yet" situation as the heist banner above -
+                        // onerror hides the frame instead of showing a broken-image icon.
+                        html += '<div class="juan-frame robbery-frame" style="margin:0 auto;"><img src="' + CREWS_BASE_URL + '/' + logoFile + '" alt="' + escapeHtml(bh.crewName) + '" onerror="this.parentElement.style.display=\'none\';"></div>';
                     }
                 }
 
