@@ -725,6 +725,16 @@
         // Same idea, for the criminal side of the RPG - a playing Quin/Flink gets their own
         // portrait+name screen too, per the user's "similar panel" request.
         const isPlayingPerpScreen = !!(data.assignedPerpName && data.perpIsPlaying);
+        // A perp assigned to a specific crew character (Quin/Flink) who ISN'T the one currently
+        // playing - per the user's explicit request, still shows THEIR OWN character portrait
+        // (unlike a watching Judge, which shows a generic badge - Perps only has 2 named
+        // characters, so "watching as Quin" is meaningful in a way "watching as some Judge" isn't
+        // for a pool of 9). Always false while isPlayingPerpScreen is true (Sync To Extension
+        // guarantees the two are mutually exclusive server-side, same as the Judge pair above).
+        // Deliberately only affects the top-row portrait, not the name/status area or the content
+        // below - unlike a watching Judge, a watching Perp isn't in any special restricted mode,
+        // they still see their normal crime-economy panel (shop/heat/inventory/etc).
+        const isWatchingPerpScreen = !!(data.assignedPerpName && !data.perpIsPlaying);
 
         // The backend only ever re-checks an override's expiresAt when Sync To Extension happens
         // to run again for some OTHER reason (a purchase, a crime, anything) - if nothing else
@@ -1031,6 +1041,21 @@
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = perpTopKey;
+            }
+        } else if (isWatchingPerpScreen) {
+            // Same portrait as the playing-perp branch above - just not currently "on" (no OBS
+            // bypass in play), so no ON-DUTY-style framing needed here, the normal WANTED/CITIZEN
+            // status badge below still applies as usual.
+            const watchPerpTopKey = "perp-watching-" + data.assignedPerpName;
+            if (lastKnownTopRowMode !== watchPerpTopKey) {
+                let topRowHtml = '<div class="stacked-panel">';
+                topRowHtml += '<div id="name-status-area"></div>';
+                topRowHtml += '<div class="juan-frame judge-portrait-frame"><img src="' + PERPS_BASE_URL + '/' + encodeURIComponent(data.assignedPerpName + ' Panel Image.png') + '" alt="' + escapeHtml(data.assignedPerpName) + '"></div>';
+                topRowHtml += '<div class="judge-name-title">' + escapeHtml(data.assignedPerpName) + '</div>';
+                topRowHtml += '</div>';
+
+                document.getElementById("top-row").innerHTML = topRowHtml;
+                lastKnownTopRowMode = watchPerpTopKey;
             }
         } else if (isPending) {
             // Only rebuild the candidates skeleton on the actual transition INTO pending, not
