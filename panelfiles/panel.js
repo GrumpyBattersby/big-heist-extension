@@ -651,16 +651,31 @@
         explosives: 1.2, vehicle: 1.0, gear: 0.75, consumables: 1.0
     };
 
-    // Same 3-tier classification used everywhere the panel/OBS talks about odds (robbery result
+    // Same 7-tier classification used everywhere the panel/OBS talks about odds (robbery result
     // cinematic, task assignment, the Big Heist finale) - based on the raw d100 roll actually
     // needed to clear a threshold AFTER skill/gun bonuses are subtracted out, not the raw
-    // threshold alone. <=25 needed = comfortably better than even odds either way; <=60 needed
-    // is genuinely competitive; anything higher means relying on a lucky roll.
+    // threshold alone. Exact bands per user's spec.
     function classifyDifficulty(neededRoll) {
-        if (neededRoll <= 25) return "Easy";
-        if (neededRoll <= 60) return "Hard";
-        return "Extremely Hard";
+        if (neededRoll <= 20) return "Easy";
+        if (neededRoll <= 30) return "Routine";
+        if (neededRoll <= 45) return "50:50";
+        if (neededRoll <= 55) return "Hard";
+        if (neededRoll <= 70) return "Difficult";
+        if (neededRoll <= 87) return "Herculean";
+        return "Near Impossible";
     }
+
+    // CSS tag class + cinematic flavor line for each tier - single source of truth so the picker
+    // tag and the result cinematic never drift out of sync with each other.
+    const DIFFICULTY_TIER_META = {
+        "Easy":            { cssClass: "difficulty-easy",       flavor: "Should be no trouble at all." },
+        "Routine":         { cssClass: "difficulty-routine",    flavor: "Nothing to worry about here." },
+        "50:50":           { cssClass: "difficulty-5050",       flavor: "Could genuinely go either way." },
+        "Hard":            { cssClass: "difficulty-hard",       flavor: "Not for the faint of heart." },
+        "Difficult":       { cssClass: "difficulty-difficult",  flavor: "This is going to take real skill." },
+        "Herculean":       { cssClass: "difficulty-herculean",  flavor: "Frankly, a miracle would help." },
+        "Near Impossible": { cssClass: "difficulty-impossible", flavor: "Whatever happens here is coming down to blind luck." }
+    };
 
     // baseName-strip logic matches Robbery - Attempt's own hasGun check exactly (inventory keys
     // can carry a "(variant)" suffix, e.g. "Gun (Compact)" - only the part before that matters).
@@ -1568,15 +1583,14 @@
             const rd = robberyCinematicData || {};
             const perpName = escapeHtml(rd.perpName || data.name || "");
             const jobLabel = escapeHtml(rd.jobLabel || "somewhere");
-            // difficultyTier is the new 3-tier field (Easy/Hard/Extremely Hard); isHardJob is the
-            // older binary field, kept as a fallback so this still reads sensibly against a
-            // Robbery - Attempt version from before the tier field existed.
+            // difficultyTier is the new 7-tier field (Easy/Routine/50:50/Hard/Difficult/
+            // Herculean/Near Impossible); isHardJob is the older binary field, kept as a fallback
+            // so this still reads sensibly against a Robbery - Attempt version from before the
+            // tier field existed.
             const tier = rd.difficultyTier || (rd.isHardJob ? "Hard" : "Easy");
             const outcome = rd.outcome || "fail";
             const succeeded = outcome === "success";
-            const tierFlavor = tier === "Extremely Hard" ? "Whatever happens here is going to come down to luck."
-                : tier === "Hard" ? "Not for the faint of heart."
-                : "Should be manageable, if nothing goes wrong.";
+            const tierFlavor = (DIFFICULTY_TIER_META[tier] || DIFFICULTY_TIER_META["Hard"]).flavor;
 
             // Per user's request: each beat stays on screen and the next one appears BELOW it,
             // building a running log of the whole job rather than replacing the previous line.
@@ -2092,7 +2106,7 @@
                 const estimate = estimateRobberyDifficulty(data, cat.key);
                 let label = escapeHtml(cat.label);
                 if (estimate) {
-                    const tierClass = estimate.tier === "Easy" ? "difficulty-easy" : estimate.tier === "Hard" ? "difficulty-hard" : "difficulty-extreme";
+                    const tierClass = (DIFFICULTY_TIER_META[estimate.tier] || DIFFICULTY_TIER_META["Hard"]).cssClass;
                     label += ' <span class="robbery-difficulty-tag ' + tierClass + '">' +
                         escapeHtml(estimate.tier) + ' • Robbery ' + estimate.skillBonus +
                         (estimate.hasGun ? ' + Gun' : '') + '</span>';

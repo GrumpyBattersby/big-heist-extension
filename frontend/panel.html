@@ -322,8 +322,10 @@
         color: #f5c518;
         font-weight: 700;
     }
-    /* Robbery/task difficulty preview tags - three-tier, consistent with the same wording used
-       in the robbery result cinematic, task assignment chat message, and the Big Heist finale. */
+    /* Robbery/task difficulty preview tags - seven-tier (Easy/Routine/50:50/Hard/Difficult/
+       Herculean/Near Impossible), consistent with the same wording used in the robbery result
+       cinematic, task assignment chat message, and the Big Heist finale. Colors ramp green ->
+       yellow -> red across the scale. */
     .robbery-difficulty-tag {
         display: inline-block;
         margin-left: 6px;
@@ -337,11 +339,27 @@
         background: #234d27;
         color: #7ee08a;
     }
+    .difficulty-routine {
+        background: #2b4d23;
+        color: #a3e08a;
+    }
+    .difficulty-5050 {
+        background: #4d4a12;
+        color: #f5e518;
+    }
     .difficulty-hard {
         background: #4d3b12;
         color: #f5c518;
     }
-    .difficulty-extreme {
+    .difficulty-difficult {
+        background: #4d2e12;
+        color: #f59a18;
+    }
+    .difficulty-herculean {
+        background: #4d1f14;
+        color: #ff9a6a;
+    }
+    .difficulty-impossible {
         background: #4d1414;
         color: #ff8a8a;
     }
