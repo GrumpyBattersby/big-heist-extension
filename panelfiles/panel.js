@@ -371,6 +371,14 @@
     // "goes back to the sheet, then teleports to the cinematic" hiccup that was reported.
     let robberyPending = false;
     let robberyPendingCategory = null;
+    // Same idea as robberyPending above, for Pickpocket - the panel used to fall straight back to
+    // the normal character sheet the instant a target was picked, with nothing visible until the
+    // pickpocketNotice toast eventually landed a moment later - exactly the "you don't know it's
+    // doing anything" gap the user reported. Shown the INSTANT a target is picked, cleared the
+    // same way robberyPending is (a fresh pickpocketNotice arriving, success OR reject, always
+    // means the attempt resolved one way or another).
+    let pickpocketPending = false;
+    let pickpocketPendingTargetName = null;
     // Which robbery categories actually exist in the CURRENT Block, and that Block's own
     // difficulty multiplier - fetched fresh each time the robbery picker opens (the Block only
     // changes when the streamer moves it via Streamdeck, so no continuous polling needed). Null
@@ -1049,7 +1057,7 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = watchTopKey;
             }
-        } else if (isPlayingPerpScreen && !stillJailed && !robberyPending && overrideMode !== "robberyResult") {
+        } else if (isPlayingPerpScreen && !stillJailed && !robberyPending && !pickpocketPending && overrideMode !== "robberyResult") {
             // Deliberately yields to the robbery cinematic/pending screens and the jail/isocube
             // screen below - those are dedicated gameplay visuals, not a generic alert graphic
             // like arrestAlert/distractAlert (where the own-portrait-always-wins rule from the
@@ -1068,7 +1076,7 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = perpTopKey;
             }
-        } else if (isWatchingPerpScreen && !stillJailed && !robberyPending && overrideMode !== "robberyResult") {
+        } else if (isWatchingPerpScreen && !stillJailed && !robberyPending && !pickpocketPending && overrideMode !== "robberyResult") {
             // Same portrait as the playing-perp branch above - just not currently "on" (no OBS
             // bypass in play), so no ON-DUTY-style framing needed here, the normal WANTED/CITIZEN
             // status badge below still applies as usual. Same robbery/jail exclusions as above,
@@ -1239,6 +1247,20 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = pendingKey;
             }
+        } else if (pickpocketPending) {
+            // Same idea as robberyPending above - instant feedback the instant a target is
+            // picked, using the same pickpocket-alert.png art already used for the OTHER
+            // direction (oiWarning, when someone else is pickpocketing YOU).
+            const pickpocketPendingKey = "pickpocket-pending-" + (pickpocketPendingTargetName || "");
+            if (lastKnownTopRowMode !== pickpocketPendingKey) {
+                let topRowHtml = '<div class="stacked-panel">';
+                topRowHtml += '<div id="name-status-area"></div>';
+                topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/pickpocket-alert.png" alt="Pickpocket in progress"></div>';
+                topRowHtml += '</div>';
+
+                document.getElementById("top-row").innerHTML = topRowHtml;
+                lastKnownTopRowMode = pickpocketPendingKey;
+            }
         } else if (showFinderPage) {
             // Same juan-shop.png treatment as the shop browser - this is still a Juan's
             // Emporium interaction, just the search step of the finder flow specifically.
@@ -1362,6 +1384,8 @@
             // in the content area below instead, which does fully re-render each stage.
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
         } else if (robberyPending) {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
+        } else if (pickpocketPending) {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
         } else if (showFinderPage) {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' makes a request...</div>';
@@ -1491,6 +1515,14 @@
             // takes over automatically the moment its override actually arrives (see the
             // detection block near the top of this function).
             html += '<div class="juan-quote">The ' + escapeHtml(((robberyPendingCategory && robberyPendingCategory.label) || 'job').replace(/^The\s+/i, '')) + ' job is underway...</div>';
+        } else if (pickpocketPending) {
+            // Same idea as robberyPending above - Pickpocket - Attempt resolves the whole
+            // thing (roll, judge spot-check, theft) in one synchronous action, so there's no
+            // multi-stage cinematic to reveal here the way robbery has - just enough to make it
+            // clear something is actually happening, until the real pickpocketNotice toast lands
+            // a moment later and this pending screen clears itself (see the hasFreshNotice check
+            // further down).
+            html += '<div class="juan-quote">Working ' + escapeHtml(pickpocketPendingTargetName || "someone") + '\'s pockets...</div>';
         } else if (overrideMode === "shop") {
             const shopItems = (data.panelOverride && data.panelOverride.items) || [];
             html += buildShopHtml(shopItems, "panel-back-button", "This view closes automatically in a few minutes, or as soon as you do something else.");
@@ -2064,6 +2096,15 @@
         if (hasFreshNotice && robberyPending) {
             robberyPending = false;
             robberyPendingCategory = null;
+        }
+
+        // Same reasoning as robberyPending above - Pickpocket - Attempt's own notice (success,
+        // "not enough creds", a judge spot-check overwrite, whatever) is the ONLY signal the
+        // client gets that the attempt actually resolved, since there's no separate cinematic
+        // override for pickpocketing. Any fresh notice arriving always means it's done.
+        if (hasFreshNotice && pickpocketPending) {
+            pickpocketPending = false;
+            pickpocketPendingTargetName = null;
         }
 
         if (hasFreshNotice) {
@@ -2753,6 +2794,8 @@
                     targetButton.addEventListener("click", function () {
                         queueAction("pickpocketTarget", { targetId: v.userId });
                         showPickpocketPicker = false;
+                        pickpocketPending = true;
+                        pickpocketPendingTargetName = v.name;
                         if (lastFetchedData) renderPerpSheet(lastFetchedData);
                     });
                 }
