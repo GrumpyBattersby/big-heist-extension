@@ -379,6 +379,7 @@
     // means the attempt resolved one way or another).
     let pickpocketPending = false;
     let pickpocketPendingTargetName = null;
+
     // Which robbery categories actually exist in the CURRENT Block, and that Block's own
     // difficulty multiplier - fetched fresh each time the robbery picker opens (the Block only
     // changes when the streamer moves it via Streamdeck, so no continuous polling needed). Null
@@ -785,6 +786,38 @@
             : status === "EX-CON" ? "status-isocube"
             : (stillJailed || status.indexOf("ISOCUBE") === 0) ? "status-isocube"
             : "status-wanted";
+
+        // Toast-style notice (great/good roll outcomes, insufficient-funds) - checked client-side
+        // for expiry same as panelOverride, prepended regardless of which view is currently
+        // showing since it's about something that just happened to the player, not tied to
+        // whatever section they happen to be looking at. Hoisted up here (used to be declared much
+        // further down, right before its own rendering block) so the Rob/Pickpocket button section
+        // below can also read it - per user's request, those buttons should come back the instant
+        // the summary text (this notice, or the robbery result cinematic) actually disappears,
+        // rather than on some separate fixed timer that could drift out of sync with it.
+        var hasFreshNotice = data.pickpocketNotice && data.pickpocketNotice.message
+            && (!data.pickpocketNotice.expiresAt || data.pickpocketNotice.expiresAt > nowSeconds);
+
+        // Real bug reported: panel stuck forever on "The X job is underway..." after Robbery -
+        // Attempt REJECTED the job server-side (block/category mismatch, laying low, per-stream
+        // cap, a busy-lock retry, etc.) rather than resolving it - those reject paths post a
+        // notice via this same pickpocketNotice field instead of a robberyResult override, and
+        // robberyPending was previously only ever cleared by that override arriving. A notice
+        // landing while still "pending" can only mean the attempt was rejected, never a real
+        // in-progress job, so it's always safe to clear the pending screen here.
+        if (hasFreshNotice && robberyPending) {
+            robberyPending = false;
+            robberyPendingCategory = null;
+        }
+
+        // Same reasoning as robberyPending above - Pickpocket - Attempt's own notice (success,
+        // "not enough creds", a judge spot-check overwrite, whatever) is the ONLY signal the
+        // client gets that the attempt actually resolved, since there's no separate cinematic
+        // override for pickpocketing. Any fresh notice arriving always means it's done.
+        if (hasFreshNotice && pickpocketPending) {
+            pickpocketPending = false;
+            pickpocketPendingTargetName = null;
+        }
 
         // Build the base skeleton (top-row + rest-of-content containers) if it doesn't exist yet -
         // this handles both the very first successful render, and recovery after an error/loading
@@ -2202,10 +2235,24 @@
                 html += '<button class="panel-shop-button" id="panel-shop-button">Visit Juan\'s Emporium</button>';
             }
             if (!stillJailed && !isLayingLow) {
-                html += '<button class="panel-shop-button" id="panel-pickpocket-button">Pickpocket Someone</button>';
+                // Per user's request (revised from an initial fixed-30s-timer version): grey the
+                // Pickpocket/Rob buttons out while that action's own summary text is still on
+                // screen, and bring them back the instant it disappears - rather than a separate
+                // clock that could drift out of sync with the actual notice. hasFreshNotice
+                // (computed earlier, right after stillJailed/statusClass) already covers this:
+                // Pickpocket - Attempt's result toast and Robbery - Attempt's reject-path toast
+                // both write to the same data.pickpocketNotice field, and it goes stale
+                // automatically the moment expiresAt passes - the exact same signal the toast
+                // itself uses to stop rendering. A genuine robbery SUCCESS/FAIL result doesn't
+                // need separate handling here at all - that's the full-screen robberyResult
+                // cinematic, an entirely different branch earlier in this chain, so this button
+                // section (and its Rob button) isn't even reachable while that's showing.
+                html += '<button class="panel-shop-button" id="panel-pickpocket-button"' + (hasFreshNotice ? ' disabled' : '') + '>' +
+                    (hasFreshNotice ? 'Pickpocket Someone (settling up...)' : 'Pickpocket Someone') + '</button>';
                 const robberyLeft = typeof data.robberyAttemptsRemaining === "number" ? data.robberyAttemptsRemaining : 999;
                 if (robberyLeft > 0) {
-                    html += '<button class="panel-shop-button" id="panel-robbery-button">Rob Somewhere</button>';
+                    html += '<button class="panel-shop-button" id="panel-robbery-button"' + (hasFreshNotice ? ' disabled' : '') + '>' +
+                        (hasFreshNotice ? 'Rob Somewhere (settling up...)' : 'Rob Somewhere') + '</button>';
                 } else {
                     html += '<div class="panel-override-expiry">You\'ve pushed your luck enough for one stream - no robberies left tonight.</div>';
                 }
@@ -2233,34 +2280,10 @@
             }
         }
 
-        // Toast-style notice (great/good roll outcomes, insufficient-funds) - checked client-side
-        // for expiry same as panelOverride, prepended regardless of which view is currently
-        // showing since it's about something that just happened to the player, not tied to
-        // whatever section they happen to be looking at.
-        var hasFreshNotice = data.pickpocketNotice && data.pickpocketNotice.message
-            && (!data.pickpocketNotice.expiresAt || data.pickpocketNotice.expiresAt > Math.floor(Date.now() / 1000));
-
-        // Real bug reported: panel stuck forever on "The X job is underway..." after Robbery -
-        // Attempt REJECTED the job server-side (block/category mismatch, laying low, per-stream
-        // cap, a busy-lock retry, etc.) rather than resolving it - those reject paths post a
-        // notice via this same pickpocketNotice field instead of a robberyResult override, and
-        // robberyPending was previously only ever cleared by that override arriving. A notice
-        // landing while still "pending" can only mean the attempt was rejected, never a real
-        // in-progress job, so it's always safe to clear the pending screen here.
-        if (hasFreshNotice && robberyPending) {
-            robberyPending = false;
-            robberyPendingCategory = null;
-        }
-
-        // Same reasoning as robberyPending above - Pickpocket - Attempt's own notice (success,
-        // "not enough creds", a judge spot-check overwrite, whatever) is the ONLY signal the
-        // client gets that the attempt actually resolved, since there's no separate cinematic
-        // override for pickpocketing. Any fresh notice arriving always means it's done.
-        if (hasFreshNotice && pickpocketPending) {
-            pickpocketPending = false;
-            pickpocketPendingTargetName = null;
-        }
-
+        // hasFreshNotice and the two pending-clearing blocks now live much earlier in this
+        // function (right after stillJailed/statusClass are computed) - moved there so the
+        // Rob/Pickpocket button section could also read hasFreshNotice for its own cooldown-until-
+        // the-summary-clears logic. Left this comment as a breadcrumb for anyone grepping for it.
         if (hasFreshNotice) {
             // Small icon shown inline next to the notice text (not a big standalone frame above
             // it) - same idea as Robbery - Attempt's stolen-item popup, but pickpocketing only
