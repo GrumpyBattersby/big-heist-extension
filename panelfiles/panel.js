@@ -1015,16 +1015,25 @@
                 lastKnownTopRowMode = judgeTopKey;
             }
         } else if (isWatchingJudgeScreen) {
-            // No specific RPG character assigned (that's what makes them "watching" rather than
-            // "playing"), so no per-character portrait to show - a generic Judge badge instead,
-            // same judge-icon.png the arrest alert used to show, just now the account's permanent
-            // look while they're a registered watching Judge rather than a one-off alert graphic.
-            const watchTopKey = "judge-watching-" + data.name;
+            // Most real watching Judges have no assignedJudgeName (the real Assign Judge clear
+            // flow removes the character assignment but keeps group membership, per earlier
+            // design) - for those, fall back to a generic Judge badge, same judge-icon.png the
+            // arrest alert used to show. But when a specific character IS assigned (e.g. the
+            // !mimic WatchingJudge flow, which - per the user's explicit request, symmetric with
+            // WatchingPerp/Quin-Flink - assigns one of the 9 named Judges without the
+            // debugForcePlaying bypass), show THEIR OWN portrait instead of the generic badge.
+            const watchTopKey = "judge-watching-" + (data.assignedJudgeName || data.name);
             if (lastKnownTopRowMode !== watchTopKey) {
                 let topRowHtml = '<div class="stacked-panel">';
                 topRowHtml += '<div id="name-status-area"></div>';
-                topRowHtml += '<div class="juan-frame judge-portrait-frame judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge"></div>';
-                topRowHtml += '<div class="judge-name-title">JUDGE ' + escapeHtml(data.name).toUpperCase() + '</div>';
+                if (data.assignedJudgeName) {
+                    const watchingJudgeShortName = data.assignedJudgeName.replace(/^Judge\s+/i, '');
+                    topRowHtml += '<div class="juan-frame judge-portrait-frame"><img src="' + JUDGES_BASE_URL + '/' + encodeURIComponent(watchingJudgeShortName + ' Panel Image.png') + '" alt="' + escapeHtml(data.assignedJudgeName) + '"></div>';
+                    topRowHtml += '<div class="judge-name-title">' + escapeHtml(data.assignedJudgeName) + '</div>';
+                } else {
+                    topRowHtml += '<div class="juan-frame judge-portrait-frame judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge"></div>';
+                    topRowHtml += '<div class="judge-name-title">JUDGE ' + escapeHtml(data.name).toUpperCase() + '</div>';
+                }
                 topRowHtml += '</div>';
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
