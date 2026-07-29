@@ -387,6 +387,14 @@
     // hasFreshNotice at render time so only the matching button greys out.
     let lastCrimeAction = null; // "robbery" | "pickpocket" | null
 
+    // Per user's request - a toggle on the robbery picker for whether to actually USE a carried
+    // Gun on the job, separate from just owning one. Defaults to true (matches the old always-use-
+    // if-owned behavior) so nothing changes for a player who never touches the toggle. Only
+    // meaningful (and only shown) when inventoryHasGun(data) is true - a player with no Gun has
+    // nothing to toggle. Client-side only, re-sent with each robberyCategory queueAction rather
+    // than persisted server-side, since it's a per-attempt choice, not standing player state.
+    let robberyUseGun = true;
+
     // Which robbery categories actually exist in the CURRENT Block, and that Block's own
     // difficulty multiplier - fetched fresh each time the robbery picker opens (the Block only
     // changes when the streamer moves it via Streamdeck, so no continuous polling needed). Null
@@ -704,18 +712,21 @@
     // subtracted off) so what the panel tells the player before they commit matches what the
     // real roll does moments later. Returns null if the current Block's own multiplier hasn't
     // loaded yet.
-    function estimateRobberyDifficulty(data, categoryKey) {
+    // effectiveHasGun defaults to "owns one AND the robberyUseGun toggle is on" - passed
+    // explicitly (rather than read from the module var directly in here) so callers previewing a
+    // hypothetical toggle state (e.g. re-rendering right after a toggle click) don't have to wait
+    // for a full data refresh first.
+    function estimateRobberyDifficulty(data, categoryKey, effectiveHasGun) {
         if (!currentBlockInfo || typeof currentBlockInfo.difficultyMultiplier !== "number") return null;
         const baseDifficulty = ROBBERY_CATEGORY_BASE_DIFFICULTY.hasOwnProperty(categoryKey) ? ROBBERY_CATEGORY_BASE_DIFFICULTY[categoryKey] : 50;
         const failThreshold = Math.round(baseDifficulty * currentBlockInfo.difficultyMultiplier);
         const skillBonus = (data.skills && data.skills.Robbery) || 0;
-        const hasGun = inventoryHasGun(data);
-        const gunBonus = hasGun ? 20 : 0;
+        const gunBonus = effectiveHasGun ? 20 : 0;
         const neededRoll = failThreshold - skillBonus - gunBonus;
         return {
             tier: classifyDifficulty(neededRoll),
             skillBonus: skillBonus,
-            hasGun: hasGun
+            hasGun: effectiveHasGun
         };
     }
 
@@ -2145,9 +2156,12 @@
             // it, not just after the roll's already happened - but WITHOUT the raw roll/skill
             // number itself, just the tier word and whether a Gun is helping. Estimate is null
             // (falls back to no suffix at all) until currentBlockInfo has actually loaded.
-            const robberyDifficultyHasGun = inventoryHasGun(data);
+            // effectiveGun folds in the toggle below - only actually "using" the gun (for both the
+            // difficulty preview AND the real attempt) when they own one AND the toggle is on.
+            const robberyOwnsGun = inventoryHasGun(data);
+            const robberyEffectiveGun = robberyOwnsGun && robberyUseGun;
             availableRobberyCategories.forEach(function (cat, i) {
-                const estimate = estimateRobberyDifficulty(data, cat.key);
+                const estimate = estimateRobberyDifficulty(data, cat.key, robberyEffectiveGun);
                 let label = escapeHtml(cat.label);
                 if (estimate) {
                     const tierClass = (DIFFICULTY_TIER_META[estimate.tier] || DIFFICULTY_TIER_META["Hard"]).cssClass;
@@ -2156,9 +2170,21 @@
                 }
                 html += '<button class="panel-shop-button" id="robbery-category-' + i + '" data-category="' + escapeHtml(cat.key) + '">' + label + '</button>';
             });
-            html += '<div class="items-text robbery-gun-note">' + (robberyDifficultyHasGun
-                ? 'Carrying a Gun raises your odds on every job above - but if you\'re caught, the odds a Judge gets called go up too, and a Gun is always confiscated on arrest.'
-                : 'Carrying a Gun raises your odds on a job, at the cost of a much higher chance of getting a Judge called on you if it goes wrong - and it\'s always confiscated if you\'re arrested.') + '</div>';
+            // Per user's follow-up request - a toggle for whether to actually carry the Gun on
+            // this job, right where the explanation about it already was. Only shown at all if
+            // they own one - nothing to toggle otherwise, so the note just states the tradeoff in
+            // the abstract (matches the previous copy for a player with no Gun).
+            if (robberyOwnsGun) {
+                html += '<div class="items-text robbery-gun-note">' +
+                    (robberyUseGun
+                        ? 'Carrying a Gun raises your odds on every job above - but if you\'re caught, the odds a Judge gets called go up too, and a Gun is always confiscated on arrest.'
+                        : 'Gun left at home for this job - odds above are unarmed. Turn it back on to use it.') +
+                    '</div>';
+                html += '<button class="panel-back-button robbery-gun-toggle" id="robbery-gun-toggle">' +
+                    (robberyUseGun ? 'Gun: ON (tap to leave it behind)' : 'Gun: OFF (tap to bring it)') + '</button>';
+            } else {
+                html += '<div class="items-text robbery-gun-note">Carrying a Gun raises your odds on a job, at the cost of a much higher chance of getting a Judge called on you if it goes wrong - and it\'s always confiscated if you\'re arrested.</div>';
+            }
             html += '<button class="panel-back-button" id="panel-robbery-cancel">&larr; Cancel</button>';
         } else {
             html += '<div class="section-title">Skills</div>';
@@ -2918,7 +2944,16 @@
             });
         }
 
+        const robberyGunToggle = document.getElementById("robbery-gun-toggle");
+        if (robberyGunToggle) {
+            robberyGunToggle.addEventListener("click", function () {
+                robberyUseGun = !robberyUseGun;
+                if (lastFetchedData) renderPerpSheet(lastFetchedData);
+            });
+        }
+
         if (showRobberyPicker) {
+            const robberyOwnsGunForClick = inventoryHasGun(data);
             getAvailableRobberyCategories().forEach(function (cat, i) {
                 const row = document.getElementById("robbery-category-" + i);
                 if (row) {
@@ -2930,7 +2965,7 @@
                         // the OI and Arrest buttons for the identical bug class - this one was
                         // just missed when Robbery was first built.
                         row.disabled = true;
-                        queueAction("robberyCategory", { category: cat.key });
+                        queueAction("robberyCategory", { category: cat.key, useGun: robberyOwnsGunForClick && robberyUseGun });
                         showRobberyPicker = false;
                         // Show the transitional "job underway" screen immediately, rather than
                         // falling back to the normal character sheet for the few seconds it takes
