@@ -368,6 +368,53 @@
         opacity: 0.85;
         margin-top: 6px;
     }
+    /* Actual toggle-switch look for the robbery Gun on/off control - a pill track with a sliding
+       knob, standard "this is a binary switch" affordance, rather than a plain text button. */
+    .gun-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        margin-bottom: 4px;
+    }
+    .gun-toggle-label {
+        font-size: 13px;
+        font-weight: 700;
+    }
+    .gun-toggle-switch {
+        position: relative;
+        width: 44px;
+        height: 24px;
+        min-width: 44px;
+        border-radius: 12px;
+        border: none;
+        background: #5a1f1f;
+        cursor: pointer;
+        padding: 0;
+        transition: background 0.15s ease;
+    }
+    .gun-toggle-switch.on {
+        background: #2a6b3a;
+    }
+    .gun-toggle-knob {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.15s ease;
+    }
+    .gun-toggle-switch.on .gun-toggle-knob {
+        transform: translateX(20px);
+    }
+    .gun-toggle-state {
+        font-size: 12px;
+        font-weight: 700;
+        opacity: 0.85;
+        min-width: 26px;
+    }
     /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
        arrest alert) - makes it visually obvious something urgent just happened, distinct from
        Juan's Emporium's yellow/navy theme used everywhere else. */

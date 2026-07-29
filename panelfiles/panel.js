@@ -2177,13 +2177,21 @@
             if (robberyOwnsGun) {
                 html += '<div class="items-text robbery-gun-note">' +
                     (robberyUseGun
-                        ? 'Carrying a Gun raises your odds on every job above - but if you\'re caught, the odds a Judge gets called go up too, and a Gun is always confiscated on arrest.'
-                        : 'Gun left at home for this job - odds above are unarmed. Turn it back on to use it.') +
+                        ? 'Carrying a Gun raises your odds on every job above - but if you\'re caught, the odds a Judge gets called go up too, and a Gun used on the job is guaranteed to be seized if you\'re arrested for it.'
+                        : 'Gun left at home for this job - odds above are unarmed.') +
                     '</div>';
-                html += '<button class="panel-back-button robbery-gun-toggle" id="robbery-gun-toggle">' +
-                    (robberyUseGun ? 'Gun: ON (tap to leave it behind)' : 'Gun: OFF (tap to bring it)') + '</button>';
+                // Rendered as an actual toggle switch (track + sliding knob, via CSS) rather than
+                // a plain button, so it visually reads as ON/OFF state rather than just another
+                // action to tap - per user's follow-up request to make it clearer what it means.
+                html += '<div class="gun-toggle-row">' +
+                    '<span class="gun-toggle-label">Bring Gun</span>' +
+                    '<button type="button" class="gun-toggle-switch' + (robberyUseGun ? ' on' : '') + '" id="robbery-gun-toggle" role="switch" aria-checked="' + (robberyUseGun ? 'true' : 'false') + '" title="' + (robberyUseGun ? 'Gun: ON - tap to leave it behind' : 'Gun: OFF - tap to bring it') + '">' +
+                    '<span class="gun-toggle-knob"></span>' +
+                    '</button>' +
+                    '<span class="gun-toggle-state">' + (robberyUseGun ? 'ON' : 'OFF') + '</span>' +
+                    '</div>';
             } else {
-                html += '<div class="items-text robbery-gun-note">Carrying a Gun raises your odds on a job, at the cost of a much higher chance of getting a Judge called on you if it goes wrong - and it\'s always confiscated if you\'re arrested.</div>';
+                html += '<div class="items-text robbery-gun-note">Carrying a Gun raises your odds on a job, at the cost of a much higher chance of getting a Judge called on you if it goes wrong - and a Gun used on the job is guaranteed to be seized if you\'re arrested for it.</div>';
             }
             html += '<button class="panel-back-button" id="panel-robbery-cancel">&larr; Cancel</button>';
         } else {
