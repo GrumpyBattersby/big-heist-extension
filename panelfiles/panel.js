@@ -380,6 +380,13 @@
     let pickpocketPending = false;
     let pickpocketPendingTargetName = null;
 
+    // Per user's follow-up - the "settling up" greyed-out state on the Rob/Pickpocket buttons
+    // should only apply to whichever action was actually just run, not both at once (they share
+    // the same underlying pickpocketNotice toast field, so hasFreshNotice alone can't tell them
+    // apart). Set the instant the real queueAction fires for either action; read alongside
+    // hasFreshNotice at render time so only the matching button greys out.
+    let lastCrimeAction = null; // "robbery" | "pickpocket" | null
+
     // Which robbery categories actually exist in the CURRENT Block, and that Block's own
     // difficulty multiplier - fetched fresh each time the robbery picker opens (the Block only
     // changes when the streamer moves it via Streamdeck, so no continuous polling needed). Null
@@ -642,14 +649,14 @@
         { key: "consumables", label: "Chemist", image: ROBBERY_BASE_URL + "/robbery-chemist.png" }
     ];
 
-    // Mirrors Robbery - Attempt's own CategoryDifficultyMultiplier table exactly (base 50 fail
-    // threshold scaled by this, then by the current Block's own multiplier on top) - duplicated
+    // Mirrors Robbery - Attempt's own CategoryBaseDifficulty table exactly (a direct d100
+    // threshold per category, scaled by the current Block's own multiplier on top) - duplicated
     // here purely for the picker's difficulty PREVIEW, same "no shared imports between actions"
     // reason the server-side comment gives for its own copy. If the server-side table ever
     // changes, this one needs updating to match or the preview will drift from the real odds.
-    const ROBBERY_CATEGORY_DIFFICULTY_MULTIPLIER = {
-        cash: 1.5, tools: 0.75, tech: 1.25, weapons: 1.5,
-        explosives: 1.2, vehicle: 1.0, gear: 0.75, consumables: 1.0
+    const ROBBERY_CATEGORY_BASE_DIFFICULTY = {
+        cash: 80, tools: 40, tech: 45, weapons: 65,
+        explosives: 55, vehicle: 60, gear: 25, consumables: 50
     };
 
     // Same 7-tier classification used everywhere the panel/OBS talks about odds (robbery result
@@ -692,14 +699,15 @@
     }
 
     // Preview-only estimate of a robbery category's odds, for the job-picker screen - mirrors
-    // Robbery - Attempt's own failThreshold/rawRollNeeded math (categoryMultiplier *
-    // blockMultiplier against a base-50 threshold, then skill + a flat +20 gun bonus subtracted
-    // off) so what the panel tells the player before they commit matches what the real roll does
-    // moments later. Returns null if the current Block's own multiplier hasn't loaded yet.
+    // Robbery - Attempt's own failThreshold/rawRollNeeded math (this category's own base
+    // difficulty scaled by the current Block's multiplier, then skill + a flat +20 gun bonus
+    // subtracted off) so what the panel tells the player before they commit matches what the
+    // real roll does moments later. Returns null if the current Block's own multiplier hasn't
+    // loaded yet.
     function estimateRobberyDifficulty(data, categoryKey) {
         if (!currentBlockInfo || typeof currentBlockInfo.difficultyMultiplier !== "number") return null;
-        const catMult = ROBBERY_CATEGORY_DIFFICULTY_MULTIPLIER.hasOwnProperty(categoryKey) ? ROBBERY_CATEGORY_DIFFICULTY_MULTIPLIER[categoryKey] : 1.0;
-        const failThreshold = Math.round(50 * catMult * currentBlockInfo.difficultyMultiplier);
+        const baseDifficulty = ROBBERY_CATEGORY_BASE_DIFFICULTY.hasOwnProperty(categoryKey) ? ROBBERY_CATEGORY_BASE_DIFFICULTY[categoryKey] : 50;
+        const failThreshold = Math.round(baseDifficulty * currentBlockInfo.difficultyMultiplier);
         const skillBonus = (data.skills && data.skills.Robbery) || 0;
         const hasGun = inventoryHasGun(data);
         const gunBonus = hasGun ? 20 : 0;
@@ -1630,8 +1638,10 @@
             const lines = [];
             lines.push(perpName + ' robs ' + jobLabel + '. Will it go well? Will they get what they want?');
             if (robberyCinematicStage >= 1) {
-                lines.push(perpName + ' is bringing a Robbery skill of ' + (typeof rd.skillValue === "number" ? rd.skillValue : 0) +
-                    (rd.hasGun ? ' plus a gun' : '') + ' - rated ' + escapeHtml(tier) + '. "' + tierFlavor + '"');
+                // Per user's request - no raw skill/roll number here, just the tier word and
+                // whether a gun is in play.
+                lines.push(perpName + (rd.hasGun ? ' is going in armed' : ' sizes up the job') +
+                    ' - rated ' + escapeHtml(tier) + '. "' + tierFlavor + '"');
             }
             if (robberyCinematicStage >= 2) {
                 lines.push('Here comes the roll....');
@@ -2131,9 +2141,10 @@
             if (availableRobberyCategories.length === 0) {
                 html += '<div class="items-text">Nothing worth robbing in this Block right now - try again once the team moves on.</div>';
             }
-            // Per the user's request - show the skill being used and how hard each job actually
-            // is BEFORE they commit to it, not just after the roll's already happened. Estimate is
-            // null (falls back to no suffix at all) until currentBlockInfo has actually loaded.
+            // Per the user's request - show how hard each job actually is BEFORE they commit to
+            // it, not just after the roll's already happened - but WITHOUT the raw roll/skill
+            // number itself, just the tier word and whether a Gun is helping. Estimate is null
+            // (falls back to no suffix at all) until currentBlockInfo has actually loaded.
             const robberyDifficultyHasGun = inventoryHasGun(data);
             availableRobberyCategories.forEach(function (cat, i) {
                 const estimate = estimateRobberyDifficulty(data, cat.key);
@@ -2141,8 +2152,7 @@
                 if (estimate) {
                     const tierClass = (DIFFICULTY_TIER_META[estimate.tier] || DIFFICULTY_TIER_META["Hard"]).cssClass;
                     label += ' <span class="robbery-difficulty-tag ' + tierClass + '">' +
-                        escapeHtml(estimate.tier) + ' • Robbery ' + estimate.skillBonus +
-                        (estimate.hasGun ? ' + Gun' : '') + '</span>';
+                        escapeHtml(estimate.tier) + (estimate.hasGun ? ' + Gun' : '') + '</span>';
                 }
                 html += '<button class="panel-shop-button" id="robbery-category-' + i + '" data-category="' + escapeHtml(cat.key) + '">' + label + '</button>';
             });
@@ -2235,24 +2245,24 @@
                 html += '<button class="panel-shop-button" id="panel-shop-button">Visit Juan\'s Emporium</button>';
             }
             if (!stillJailed && !isLayingLow) {
-                // Per user's request (revised from an initial fixed-30s-timer version): grey the
-                // Pickpocket/Rob buttons out while that action's own summary text is still on
-                // screen, and bring them back the instant it disappears - rather than a separate
-                // clock that could drift out of sync with the actual notice. hasFreshNotice
-                // (computed earlier, right after stillJailed/statusClass) already covers this:
-                // Pickpocket - Attempt's result toast and Robbery - Attempt's reject-path toast
-                // both write to the same data.pickpocketNotice field, and it goes stale
-                // automatically the moment expiresAt passes - the exact same signal the toast
-                // itself uses to stop rendering. A genuine robbery SUCCESS/FAIL result doesn't
-                // need separate handling here at all - that's the full-screen robberyResult
-                // cinematic, an entirely different branch earlier in this chain, so this button
-                // section (and its Rob button) isn't even reachable while that's showing.
-                html += '<button class="panel-shop-button" id="panel-pickpocket-button"' + (hasFreshNotice ? ' disabled' : '') + '>' +
-                    (hasFreshNotice ? 'Pickpocket Someone (settling up...)' : 'Pickpocket Someone') + '</button>';
+                // Per user's request (revised twice now): grey a Rob/Pickpocket button out while
+                // that SPECIFIC action's own summary text is still on screen, and bring it back the
+                // instant that text disappears - not a separate clock, and not both buttons at
+                // once. Pickpocket - Attempt's result toast and Robbery - Attempt's reject-path
+                // toast both write to the same shared data.pickpocketNotice field, so hasFreshNotice
+                // alone can't tell which action actually produced it - lastCrimeAction (set at the
+                // exact moment each action's real queueAction fires) disambiguates that. A genuine
+                // robbery SUCCESS/FAIL result doesn't need this at all - that's the full-screen
+                // robberyResult cinematic, an entirely different branch earlier in this chain, so
+                // this button section isn't even reachable while that's showing.
+                const pickpocketSettling = hasFreshNotice && lastCrimeAction === "pickpocket";
+                const robberySettling = hasFreshNotice && lastCrimeAction === "robbery";
+                html += '<button class="panel-shop-button" id="panel-pickpocket-button"' + (pickpocketSettling ? ' disabled' : '') + '>' +
+                    (pickpocketSettling ? 'Pickpocket Someone (settling up...)' : 'Pickpocket Someone') + '</button>';
                 const robberyLeft = typeof data.robberyAttemptsRemaining === "number" ? data.robberyAttemptsRemaining : 999;
                 if (robberyLeft > 0) {
-                    html += '<button class="panel-shop-button" id="panel-robbery-button"' + (hasFreshNotice ? ' disabled' : '') + '>' +
-                        (hasFreshNotice ? 'Rob Somewhere (settling up...)' : 'Rob Somewhere') + '</button>';
+                    html += '<button class="panel-shop-button" id="panel-robbery-button"' + (robberySettling ? ' disabled' : '') + '>' +
+                        (robberySettling ? 'Rob Somewhere (settling up...)' : 'Rob Somewhere') + '</button>';
                 } else {
                     html += '<div class="panel-override-expiry">You\'ve pushed your luck enough for one stream - no robberies left tonight.</div>';
                 }
@@ -2929,6 +2939,7 @@
                         // the sheet, then teleports into the cinematic" hiccup.
                         robberyPending = true;
                         robberyPendingCategory = cat;
+                        lastCrimeAction = "robbery";
                         if (lastFetchedData) renderPerpSheet(lastFetchedData);
                     });
                 }
@@ -2973,6 +2984,7 @@
                         showPickpocketPicker = false;
                         pickpocketPending = true;
                         pickpocketPendingTargetName = v.name;
+                        lastCrimeAction = "pickpocket";
                         if (lastFetchedData) renderPerpSheet(lastFetchedData);
                     });
                 }
