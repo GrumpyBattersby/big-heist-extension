@@ -797,6 +797,23 @@
             showRobberyPicker = false;
             showBigHeistView = false;
             showTradePicker = false;
+
+            // Same belt-and-braces reset for the two *Pending placeholders, EXCEPT when the
+            // arriving override is robberyResult - that one clears robberyPending itself, a
+            // couple lines up, fingerprinted by expiresAt so the staged cinematic can tell a
+            // fresh result from a still-mid-animation one; clearing it unconditionally here too
+            // would race harmlessly with that, but there's no reason to duplicate it. Any OTHER
+            // override (oiWarning, arrestAlert, a shop rejection, etc) arriving is real proof the
+            // pending state is stale/done, so drop it immediately rather than only on the next
+            // pickpocketNotice/robberyResult - this is what stops a pending flag that somehow
+            // never got its own clearing signal from silently blocking every future override's
+            // content forever (the root cause behind "pressed Arrest/Oi and nothing happened").
+            if (overrideMode !== "robberyResult") {
+                robberyPending = false;
+                robberyPendingCategory = null;
+            }
+            pickpocketPending = false;
+            pickpocketPendingTargetName = null;
         }
 
         // Resolves the shop-entry heat check (see shopEntryPending above). "shopReady" means the
@@ -1525,11 +1542,6 @@
             if (robberyCinematicStage >= 4) {
                 html += '<button class="panel-back-button" id="panel-robbery-result-back">&larr; Back</button>';
             }
-        } else if (robberyPending) {
-            // Immediate transitional screen the instant a job is picked - the real cinematic
-            // takes over automatically the moment its override actually arrives (see the
-            // detection block near the top of this function).
-            html += '<div class="juan-quote">The ' + escapeHtml(((robberyPendingCategory && robberyPendingCategory.label) || 'job').replace(/^The\s+/i, '')) + ' job is underway...</div>';
         } else if (overrideMode === "shop") {
             const shopItems = (data.panelOverride && data.panelOverride.items) || [];
             html += buildShopHtml(shopItems, "panel-back-button", "This view closes automatically in a few minutes, or as soon as you do something else.");
@@ -1676,6 +1688,23 @@
             }
             html += '<button class="panel-urgent-button" id="panel-trade-send-button">Send Trade Offer</button>';
             html += '<button class="panel-back-button" id="panel-trade-request-back">&larr; Back</button>';
+        } else if (robberyPending) {
+            // Immediate transitional screen the instant a job is picked - the real cinematic
+            // takes over automatically the moment its override actually arrives (see the
+            // detection block near the top of this function).
+            //
+            // Deliberately checked AFTER the full overrideMode chain, same reasoning as
+            // pickpocketPending just below - this used to be checked BEFORE shop/findersFee/
+            // itemInfo/oiWarning/arrestAlert/distractAlert/heatDenied/offendedDenied/tradeIncoming/
+            // tradeSent, which meant a robberyPending flag that never got cleared (e.g. no
+            // robberyResult override ever actually arrived to clear it - a real risk since it's
+            // the ONLY thing that resets robberyPending) would silently swallow every other
+            // server-driven override's content forever, including a live arrestAlert. That's the
+            // likely explanation for "pressed the arrest button and nothing happened, the window
+            // expired" - the ARREST button never rendered in the content area at all because a
+            // stale robberyPending was still blocking it, even though the top-row/name-status
+            // sections (which already checked overrideMode first) may have shown the alert fine.
+            html += '<div class="juan-quote">The ' + escapeHtml(((robberyPendingCategory && robberyPendingCategory.label) || 'job').replace(/^The\s+/i, '')) + ' job is underway...</div>';
         } else if (pickpocketPending) {
             // Same idea as robberyPending above - Pickpocket - Attempt resolves the whole
             // thing (roll, judge spot-check, theft) in one synchronous action, so there's no
