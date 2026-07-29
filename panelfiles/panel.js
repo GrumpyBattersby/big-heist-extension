@@ -641,6 +641,60 @@
         { key: "consumables", label: "Chemist", image: ROBBERY_BASE_URL + "/robbery-chemist.png" }
     ];
 
+    // Mirrors Robbery - Attempt's own CategoryDifficultyMultiplier table exactly (base 50 fail
+    // threshold scaled by this, then by the current Block's own multiplier on top) - duplicated
+    // here purely for the picker's difficulty PREVIEW, same "no shared imports between actions"
+    // reason the server-side comment gives for its own copy. If the server-side table ever
+    // changes, this one needs updating to match or the preview will drift from the real odds.
+    const ROBBERY_CATEGORY_DIFFICULTY_MULTIPLIER = {
+        cash: 1.5, tools: 0.75, tech: 1.25, weapons: 1.5,
+        explosives: 1.2, vehicle: 1.0, gear: 0.75, consumables: 1.0
+    };
+
+    // Same 3-tier classification used everywhere the panel/OBS talks about odds (robbery result
+    // cinematic, task assignment, the Big Heist finale) - based on the raw d100 roll actually
+    // needed to clear a threshold AFTER skill/gun bonuses are subtracted out, not the raw
+    // threshold alone. <=25 needed = comfortably better than even odds either way; <=60 needed
+    // is genuinely competitive; anything higher means relying on a lucky roll.
+    function classifyDifficulty(neededRoll) {
+        if (neededRoll <= 25) return "Easy";
+        if (neededRoll <= 60) return "Hard";
+        return "Extremely Hard";
+    }
+
+    // baseName-strip logic matches Robbery - Attempt's own hasGun check exactly (inventory keys
+    // can carry a "(variant)" suffix, e.g. "Gun (Compact)" - only the part before that matters).
+    function inventoryHasGun(data) {
+        const inv = data.inventory || {};
+        for (const key in inv) {
+            if (!inv.hasOwnProperty(key) || inv[key] <= 0) continue;
+            const parenIndex = key.indexOf(" (");
+            const baseName = (parenIndex > 0 && key.endsWith(")")) ? key.substring(0, parenIndex) : key;
+            if (baseName.toLowerCase() === "gun") return true;
+        }
+        return false;
+    }
+
+    // Preview-only estimate of a robbery category's odds, for the job-picker screen - mirrors
+    // Robbery - Attempt's own failThreshold/rawRollNeeded math (categoryMultiplier *
+    // blockMultiplier against a base-50 threshold, then skill + a flat +20 gun bonus subtracted
+    // off) so what the panel tells the player before they commit matches what the real roll does
+    // moments later. Returns null if the current Block's own multiplier hasn't loaded yet.
+    function estimateRobberyDifficulty(data, categoryKey) {
+        if (!currentBlockInfo || typeof currentBlockInfo.difficultyMultiplier !== "number") return null;
+        const catMult = ROBBERY_CATEGORY_DIFFICULTY_MULTIPLIER.hasOwnProperty(categoryKey) ? ROBBERY_CATEGORY_DIFFICULTY_MULTIPLIER[categoryKey] : 1.0;
+        const failThreshold = Math.round(50 * catMult * currentBlockInfo.difficultyMultiplier);
+        const skillBonus = (data.skills && data.skills.Robbery) || 0;
+        const hasGun = inventoryHasGun(data);
+        const gunBonus = hasGun ? 20 : 0;
+        const neededRoll = failThreshold - skillBonus - gunBonus;
+        return {
+            tier: classifyDifficulty(neededRoll),
+            skillBonus: skillBonus,
+            hasGun: hasGun
+        };
+    }
+
     function getPickpocketCandidates(data) {
         let list = data.presentViewers || [];
         // Twitch's "users in chat" list typically excludes the broadcaster's own account (they
@@ -1514,16 +1568,23 @@
             const rd = robberyCinematicData || {};
             const perpName = escapeHtml(rd.perpName || data.name || "");
             const jobLabel = escapeHtml(rd.jobLabel || "somewhere");
-            const isHard = !!rd.isHardJob;
+            // difficultyTier is the new 3-tier field (Easy/Hard/Extremely Hard); isHardJob is the
+            // older binary field, kept as a fallback so this still reads sensibly against a
+            // Robbery - Attempt version from before the tier field existed.
+            const tier = rd.difficultyTier || (rd.isHardJob ? "Hard" : "Easy");
             const outcome = rd.outcome || "fail";
             const succeeded = outcome === "success";
+            const tierFlavor = tier === "Extremely Hard" ? "Whatever happens here is going to come down to luck."
+                : tier === "Hard" ? "Not for the faint of heart."
+                : "Should be manageable, if nothing goes wrong.";
 
             // Per user's request: each beat stays on screen and the next one appears BELOW it,
             // building a running log of the whole job rather than replacing the previous line.
             const lines = [];
             lines.push(perpName + ' robs ' + jobLabel + '. Will it go well? Will they get what they want?');
             if (robberyCinematicStage >= 1) {
-                lines.push(perpName + ' has a skill of ' + (typeof rd.skillValue === "number" ? rd.skillValue : 0) + ' - this looks to be a ' + (isHard ? 'hard' : 'easy') + ' job. "' + (isHard ? 'Not for the faint of heart.' : "Just don't blow it.") + '"');
+                lines.push(perpName + ' is bringing a Robbery skill of ' + (typeof rd.skillValue === "number" ? rd.skillValue : 0) +
+                    (rd.hasGun ? ' plus a gun' : '') + ' - rated ' + escapeHtml(tier) + '. "' + tierFlavor + '"');
             }
             if (robberyCinematicStage >= 2) {
                 lines.push('Here comes the roll....');
@@ -2023,9 +2084,24 @@
             if (availableRobberyCategories.length === 0) {
                 html += '<div class="items-text">Nothing worth robbing in this Block right now - try again once the team moves on.</div>';
             }
+            // Per the user's request - show the skill being used and how hard each job actually
+            // is BEFORE they commit to it, not just after the roll's already happened. Estimate is
+            // null (falls back to no suffix at all) until currentBlockInfo has actually loaded.
+            const robberyDifficultyHasGun = inventoryHasGun(data);
             availableRobberyCategories.forEach(function (cat, i) {
-                html += '<button class="panel-shop-button" id="robbery-category-' + i + '" data-category="' + escapeHtml(cat.key) + '">' + escapeHtml(cat.label) + '</button>';
+                const estimate = estimateRobberyDifficulty(data, cat.key);
+                let label = escapeHtml(cat.label);
+                if (estimate) {
+                    const tierClass = estimate.tier === "Easy" ? "difficulty-easy" : estimate.tier === "Hard" ? "difficulty-hard" : "difficulty-extreme";
+                    label += ' <span class="robbery-difficulty-tag ' + tierClass + '">' +
+                        escapeHtml(estimate.tier) + ' • Robbery ' + estimate.skillBonus +
+                        (estimate.hasGun ? ' + Gun' : '') + '</span>';
+                }
+                html += '<button class="panel-shop-button" id="robbery-category-' + i + '" data-category="' + escapeHtml(cat.key) + '">' + label + '</button>';
             });
+            html += '<div class="items-text robbery-gun-note">' + (robberyDifficultyHasGun
+                ? 'Carrying a Gun raises your odds on every job above - but if you\'re caught, the odds a Judge gets called go up too, and a Gun is always confiscated on arrest.'
+                : 'Carrying a Gun raises your odds on a job, at the cost of a much higher chance of getting a Judge called on you if it goes wrong - and it\'s always confiscated if you\'re arrested.') + '</div>';
             html += '<button class="panel-back-button" id="panel-robbery-cancel">&larr; Cancel</button>';
         } else {
             html += '<div class="section-title">Skills</div>';
