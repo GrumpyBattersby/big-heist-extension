@@ -1049,7 +1049,14 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = watchTopKey;
             }
-        } else if (isPlayingPerpScreen) {
+        } else if (isPlayingPerpScreen && !stillJailed && !robberyPending && overrideMode !== "robberyResult") {
+            // Deliberately yields to the robbery cinematic/pending screens and the jail/isocube
+            // screen below - those are dedicated gameplay visuals, not a generic alert graphic
+            // like arrestAlert/distractAlert (where the own-portrait-always-wins rule from the
+            // Judge branch above is correct). Without these exclusions a playing RPG Perp's own
+            // portrait would sit there frozen through an entire robbery or jail stint, which is
+            // exactly the bug the user reported ("the RPGPerp image just stays there all the
+            // time" / cube screen never showing).
             const perpTopKey = "perp-screen-" + data.assignedPerpName;
             if (lastKnownTopRowMode !== perpTopKey) {
                 let topRowHtml = '<div class="stacked-panel">';
@@ -1061,10 +1068,11 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = perpTopKey;
             }
-        } else if (isWatchingPerpScreen) {
+        } else if (isWatchingPerpScreen && !stillJailed && !robberyPending && overrideMode !== "robberyResult") {
             // Same portrait as the playing-perp branch above - just not currently "on" (no OBS
             // bypass in play), so no ON-DUTY-style framing needed here, the normal WANTED/CITIZEN
-            // status badge below still applies as usual.
+            // status badge below still applies as usual. Same robbery/jail exclusions as above,
+            // for the same reason.
             const watchPerpTopKey = "perp-watching-" + data.assignedPerpName;
             if (lastKnownTopRowMode !== watchPerpTopKey) {
                 let topRowHtml = '<div class="stacked-panel">';
