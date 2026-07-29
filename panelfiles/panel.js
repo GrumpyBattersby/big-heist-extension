@@ -1530,14 +1530,6 @@
             // takes over automatically the moment its override actually arrives (see the
             // detection block near the top of this function).
             html += '<div class="juan-quote">The ' + escapeHtml(((robberyPendingCategory && robberyPendingCategory.label) || 'job').replace(/^The\s+/i, '')) + ' job is underway...</div>';
-        } else if (pickpocketPending) {
-            // Same idea as robberyPending above - Pickpocket - Attempt resolves the whole
-            // thing (roll, judge spot-check, theft) in one synchronous action, so there's no
-            // multi-stage cinematic to reveal here the way robbery has - just enough to make it
-            // clear something is actually happening, until the real pickpocketNotice toast lands
-            // a moment later and this pending screen clears itself (see the hasFreshNotice check
-            // further down).
-            html += '<div class="juan-quote">Working ' + escapeHtml(pickpocketPendingTargetName || "someone") + '\'s pockets...</div>';
         } else if (overrideMode === "shop") {
             const shopItems = (data.panelOverride && data.panelOverride.items) || [];
             html += buildShopHtml(shopItems, "panel-back-button", "This view closes automatically in a few minutes, or as soon as you do something else.");
@@ -1684,6 +1676,26 @@
             }
             html += '<button class="panel-urgent-button" id="panel-trade-send-button">Send Trade Offer</button>';
             html += '<button class="panel-back-button" id="panel-trade-request-back">&larr; Back</button>';
+        } else if (pickpocketPending) {
+            // Same idea as robberyPending above - Pickpocket - Attempt resolves the whole
+            // thing (roll, judge spot-check, theft) in one synchronous action, so there's no
+            // multi-stage cinematic to reveal here the way robbery has - just enough to make it
+            // clear something is actually happening, until the real pickpocketNotice toast lands
+            // a moment later and this pending screen clears itself (see the hasFreshNotice check
+            // further down).
+            //
+            // Deliberately checked AFTER the full overrideMode chain above (shop/findersFee/
+            // itemInfo/oiWarning/arrestAlert/etc), not before it like the earlier version of this
+            // branch was. The client sets pickpocketPending the instant a target is clicked and
+            // only clears it once a fresh pickpocketNotice toast lands - but for a self-pickpocket
+            // (thiefId === targetId, the test-account exception in Pickpocket - Attempt), the SAME
+            // account's panel also receives the real oiWarning panelOverride mid-attempt. With
+            // pickpocketPending checked first, that oiWarning override was getting completely
+            // masked - the panel stayed stuck on "Working ...'s pockets..." with no OI button,
+            // since content never got a chance to render the override. Checking it last here means
+            // any genuine server-driven override (oiWarning included) always wins over the
+            // client-side placeholder, exactly like the top-row and name-status chains already do.
+            html += '<div class="juan-quote">Working ' + escapeHtml(pickpocketPendingTargetName || "someone") + '\'s pockets...</div>';
         } else if (showFinderPage) {
             // Panel-driven replacement for !finditem - a text search field. Submitting queues
             // finderSearch, which triggers the same server-side Finders Fee System logic a chat
