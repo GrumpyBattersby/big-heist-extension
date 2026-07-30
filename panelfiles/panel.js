@@ -536,7 +536,6 @@
         });
         html += '</div>';
 
-        html += '<div class="stream-advert-footer">Moderators can force this panel live early with !panellive on.</div>';
         html += '</div>';
 
         document.getElementById("content").innerHTML = html;
