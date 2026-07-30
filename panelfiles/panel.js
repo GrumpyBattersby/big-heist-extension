@@ -88,6 +88,9 @@
     // Cleared whenever the advert screen goes away (either the show goes live, or the panel
     // re-renders something else) - see clearStreamAdvertInterval() below.
     let streamAdvertIntervalId = null;
+    // Ticks the live countdown on the Big Heist vote picker screen (see renderHeistVotePicker
+    // below) - same idiom as streamAdvertIntervalId just above.
+    let heistVoteIntervalId = null;
 
     let showPickpocketPicker = false;
     let showShopBrowser = false;
@@ -858,6 +861,90 @@
         "The Chrome-Claw Custodians": "chrome-claw-custodians.png"
     };
 
+    function clearHeistVoteInterval() {
+        if (heistVoteIntervalId) {
+            clearInterval(heistVoteIntervalId);
+            heistVoteIntervalId = null;
+        }
+    }
+
+    // Renders the Big Heist vote picker - 4 randomly-chosen heist candidates, each shown as a
+    // card (title/image/description/crew range/items/reward), with a live-ticking 2-minute
+    // countdown and a vote button per card. data.heistVote is GLOBAL state (one round for the
+    // whole show, not per-viewer) pushed by Streamer.bot's "Big Heist - Vote Round Start"/"Vote
+    // Tick" actions - see backend/server.js's heistVote section for the shape. Called instead of
+    // the normal character sheet whenever data.heistVote.active is true (checked in
+    // renderPerpSheet, right before the heistRunning takeover - the two are mutually exclusive,
+    // since a heist can't be running before its own vote has resolved).
+    function renderHeistVotePicker(data) {
+        clearHeistVoteInterval();
+        const hv = data.heistVote;
+        const myVote = hv.votes && currentUserId ? hv.votes[currentUserId] : null;
+
+        let html = '<div class="section-title">Sector 21 - Pick Tonight\'s Big Heist</div>';
+        html += '<div class="juan-quote">4 jobs are on the table. Vote for the one you want to pull tonight - most votes when the clock runs out wins.</div>';
+        html += '<div class="heist-vote-countdown" id="heist-vote-countdown">--:--</div>';
+        html += '<div class="heist-vote-grid">';
+
+        (hv.candidates || []).forEach(function (c) {
+            const voteCount = hv.votes ? Object.values(hv.votes).filter(function (v) { return v === c.heistKey; }).length : 0;
+            const isMyVote = myVote === c.heistKey;
+            const imgFile = HEIST_IMAGES[c.heistKey];
+
+            html += '<div class="heist-vote-card' + (isMyVote ? ' heist-vote-card-mine' : '') + '">';
+            if (imgFile) {
+                html += '<div class="heist-vote-card-image"><img src="' + HEISTS_BASE_URL + '/' + imgFile + '" alt="' + escapeHtml(c.heistName || '') + '" onerror="this.parentElement.style.display=\'none\';"></div>';
+            }
+            html += '<div class="heist-vote-votes">' + voteCount + ' VOTE' + (voteCount === 1 ? '' : 'S') + '</div>';
+            html += '<div class="heist-vote-title">' + escapeHtml(c.heistName || c.heistKey) + '</div>';
+            html += '<div class="heist-vote-desc">' + escapeHtml(c.description || '') + '</div>';
+            html += '<div class="heist-vote-stats">' +
+                '<span>MIN CREW <strong>' + (c.minCrew != null ? c.minCrew : '?') + '</strong></span>' +
+                '<span>MAX CREW <strong>' + (c.maxCrew != null ? c.maxCrew : '?') + '</strong></span>' +
+                '</div>';
+            if (c.items && c.items.length) {
+                html += '<div class="heist-vote-items">ITEMS: ' + escapeHtml(c.items.join(', ')) + '</div>';
+            }
+            html += '<div class="heist-vote-amount">' + (typeof c.amountOnOffer === 'number' ? c.amountOnOffer.toLocaleString() : c.amountOnOffer || '?') + ' cr ON OFFER</div>';
+            html += '<button type="button" class="heist-vote-button' + (isMyVote ? ' voted' : '') + '" data-heist-key="' + escapeHtml(c.heistKey) + '">' +
+                (isMyVote ? 'VOTED' : 'VOTE') + '</button>';
+            html += '</div>';
+        });
+
+        html += '</div>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".heist-vote-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const key = btn.getAttribute("data-heist-key");
+                document.querySelectorAll(".heist-vote-button").forEach(function (b) { b.disabled = true; });
+                queueAction("voteHeist", { heistKey: key });
+            });
+        });
+
+        const endsAtMs = hv.votingEndsAt ? hv.votingEndsAt * 1000 : null;
+        if (endsAtMs) {
+            const tick = function () {
+                const el = document.getElementById("heist-vote-countdown");
+                if (!el) {
+                    clearHeistVoteInterval();
+                    return;
+                }
+                const secondsLeft = Math.max(0, Math.floor((endsAtMs - Date.now()) / 1000));
+                const minutes = Math.floor(secondsLeft / 60);
+                const seconds = secondsLeft % 60;
+                el.textContent = "VOTING CLOSES IN " + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+                if (secondsLeft <= 0) {
+                    el.textContent = "TALLYING VOTES...";
+                    clearHeistVoteInterval();
+                }
+            };
+            tick();
+            heistVoteIntervalId = setInterval(tick, 1000);
+        }
+    }
+
     const ROBBERY_CATEGORIES = [
         { key: "cash", label: "The Bank", image: ROBBERY_BASE_URL + "/robbery-bank.png" },
         { key: "tools", label: "Hardware Store", image: ROBBERY_BASE_URL + "/robbery-hardware.png" },
@@ -1268,6 +1355,16 @@
             // own fresh timer rather than being permanently suppressed.
             bagmanNoticeDismissTimerFor = null;
             bagmanNoticeDismissed = false;
+        }
+
+        // Big Heist vote round - takes over the whole panel the same way the running-heist
+        // cinematic below does, since there's nothing else useful to show while 4 candidates are
+        // up for a vote. Bagman choice/result above still take priority (same reasoning as the
+        // heistRunning takeover just below - those need to keep working regardless). Mutually
+        // exclusive with heistRunning: a heist can't be running before its own vote has resolved.
+        if (data.heistVote && data.heistVote.active) {
+            renderHeistVotePicker(data);
+            return;
         }
 
         // Locks the panel down to just the heist image/title while the OBS finale is actually

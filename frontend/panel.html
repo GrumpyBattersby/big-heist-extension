@@ -488,6 +488,112 @@
         opacity: 0.6;
         font-style: italic;
     }
+    /* Big Heist vote picker - 4 candidate cards with a live countdown (see
+       renderHeistVotePicker() in panel.js). */
+    .heist-vote-countdown {
+        text-align: center;
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        color: #ffcf4d;
+        background: #2d1b4e;
+        border: 1px solid #b088f9;
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin: 10px 0 14px;
+    }
+    .heist-vote-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    .heist-vote-card {
+        border: 1px solid rgba(240, 230, 210, 0.3);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.2);
+        position: relative;
+    }
+    .heist-vote-card-mine {
+        border-color: #ffcf4d;
+        box-shadow: 0 0 10px rgba(255, 207, 77, 0.4);
+    }
+    .heist-vote-card-image {
+        width: 100%;
+        max-height: 120px;
+        overflow: hidden;
+        border-radius: 6px;
+        margin-bottom: 6px;
+    }
+    .heist-vote-card-image img {
+        width: 100%;
+        display: block;
+        object-fit: cover;
+    }
+    .heist-vote-votes {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: #b0202a;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 800;
+        padding: 3px 7px;
+        border-radius: 12px;
+        letter-spacing: 0.5px;
+    }
+    .heist-vote-title {
+        font-size: 15px;
+        font-weight: 800;
+        color: #ffcf4d;
+        margin-bottom: 4px;
+    }
+    .heist-vote-desc {
+        font-size: 12px;
+        opacity: 0.85;
+        line-height: 1.4;
+        margin-bottom: 8px;
+    }
+    .heist-vote-stats {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        opacity: 0.85;
+        margin-bottom: 6px;
+    }
+    .heist-vote-stats strong {
+        color: #f0e6d2;
+    }
+    .heist-vote-items {
+        font-size: 11px;
+        opacity: 0.75;
+        margin-bottom: 6px;
+    }
+    .heist-vote-amount {
+        font-size: 13px;
+        font-weight: 700;
+        color: #7fd77f;
+        margin-bottom: 8px;
+    }
+    .heist-vote-button {
+        width: 100%;
+        padding: 8px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        border-radius: 6px;
+        border: 1px solid #b0202a;
+        background: #5a1f1f;
+        color: #f0e6d2;
+        cursor: pointer;
+    }
+    .heist-vote-button.voted {
+        background: #2a6b3a;
+        border-color: #4caf50;
+    }
+    .heist-vote-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
     /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
        arrest alert) - makes it visually obvious something urgent just happened, distinct from
        Juan's Emporium's yellow/navy theme used everywhere else. */

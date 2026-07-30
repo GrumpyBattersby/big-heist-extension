@@ -115,6 +115,42 @@ app.get('/api/stream-status', (req, res) => {
 });
 
 // ============================
+// BIG HEIST VOTE - the pre-show "pick 4 heists, vote for 2 minutes" round. This is GLOBAL state
+// (one vote round for the whole show, not per-viewer), so it's pushed/read the same way
+// streamStatus is above - a dedicated object, not folded into the per-user store, and included on
+// every /api/my-data response regardless of found/not-found so even a brand new viewer sees the
+// vote in progress. Streamer.bot owns the source of truth (ActiveHeistVote global var) and pushes
+// its full current snapshot here every time it changes (round start, each vote, and the final
+// tally) - simplest to reason about than incremental patches, and the payload is tiny (4
+// candidates + a handful of votes).
+// ============================
+let heistVote = {
+    active: false,
+    candidates: [],       // [{ heistKey, heistName, description, minCrew, maxCrew, items, amountOnOffer }]
+    votingEndsAt: null,   // Unix seconds
+    votes: {},             // userId -> heistKey
+    resolvedWinnerKey: null,
+    resolvedAt: null
+};
+
+app.post('/api/push-heist-vote', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+    const { active, candidates, votingEndsAt, votes, resolvedWinnerKey, resolvedAt } = req.body;
+    heistVote = {
+        active: !!active,
+        candidates: Array.isArray(candidates) ? candidates : [],
+        votingEndsAt: votingEndsAt || null,
+        votes: votes && typeof votes === 'object' ? votes : {},
+        resolvedWinnerKey: resolvedWinnerKey || null,
+        resolvedAt: resolvedAt || null
+    };
+    res.json({ ok: true, heistVote });
+});
+
+// ============================
 // PUSH DATA - called by Streamer.bot whenever a perp's inventory or skills change
 // ============================
 app.post('/api/push-data', (req, res) => {
@@ -386,6 +422,7 @@ app.get('/api/my-data', (req, res) => {
         return res.json({
             found: false,
             live: live,
+            heistVote: heistVote,
             message: "No perp data found yet - have you run !becomeperp on stream?"
         });
     }
@@ -393,6 +430,7 @@ app.get('/api/my-data', (req, res) => {
     res.json({
         found: true,
         live: live,
+        heistVote: heistVote,
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
