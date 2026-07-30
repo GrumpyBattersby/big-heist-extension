@@ -71,6 +71,24 @@
     // fresh network fetch - this whole picker is a client-side-only UI state, not a
     // server-persisted panelOverride, since it's just a quick pick-and-go interaction.
     let lastFetchedData = null;
+
+    // Per user's request - whether the show is currently "live" from the panel's point of view
+    // (real stream-live detection OR a moderator's "!panellive on" override - see server.js'
+    // computeEffectiveLive()). Drives the top-level branch in fetchMyData(): true shows the
+    // normal character sheet/everything as it's always worked, false shows the Sector 21
+    // advert/countdown screen instead. Starts true (not false) so the panel doesn't flash the
+    // advert screen for a split second on first load before the very first fetch resolves - a
+    // brief "loading" flicker into the advert would be worse than briefly assuming live.
+    let isPanelLive = true;
+    // The keepalive ticker (see maybeStartKeepalive()/maybeStopKeepalive() near renderStreamAdvert
+    // below) - only runs while isPanelLive is true, per user's request ("keeping it alive through
+    // the stream until we're done" - not meant to run 24/7, just during the show itself).
+    let keepaliveIntervalId = null;
+    // Ticks the live countdown on the Sector 21 advert screen once a second while it's on screen.
+    // Cleared whenever the advert screen goes away (either the show goes live, or the panel
+    // re-renders something else) - see clearStreamAdvertInterval() below.
+    let streamAdvertIntervalId = null;
+
     let showPickpocketPicker = false;
     let showShopBrowser = false;
     // NEW - true from the moment the shop button is clicked until either the server's heat roll
@@ -322,6 +340,21 @@
                     '<div id="status-message">Could not verify your identity - try reloading.</div>';
                 return;
             }
+
+            // Per user's request - the panel is only "active" (character sheet, robbery,
+            // pickpocket, everything) while the show is actually live, OR a moderator has forced
+            // it live via "!panellive on". Otherwise show the Sector 21 advert with the next
+            // show's countdown instead - this replaces the old "No perp data found yet" message
+            // too, since that was really just one specific case of "there's nothing to do here
+            // right now," which the advert covers far better regardless of found/not-found.
+            isPanelLive = !!result.data.live;
+            if (!isPanelLive) {
+                renderStreamAdvert();
+                return;
+            }
+            clearStreamAdvertInterval();
+            maybeStartKeepalive();
+
             if (!result.data.found) {
                 document.getElementById("content").innerHTML =
                     '<div id="status-message">' + result.data.message + '</div>';
@@ -348,6 +381,186 @@
         document.getElementById("share-btn").addEventListener("click", function () {
             Twitch.ext.actions.requestIdShare();
         });
+    }
+
+    // ============================
+    // SECTOR 21 STREAM ADVERT / COUNTDOWN - shown instead of the character sheet whenever the show
+    // isn't live (per isPanelLive in fetchMyData). Three fixed weekly slots, all specified by the
+    // user in NZ time - converted here to the viewer's own local time (with a GMT/UTC fallback if
+    // that somehow fails) and used to compute a live-ticking countdown to whichever is soonest.
+    // ============================
+
+    // weekday uses the JS Date convention: 0=Sunday ... 6=Saturday.
+    const SHOW_SCHEDULE = [
+        { weekday: 0, hour: 0, minute: 0, team: "Red Perp Team" },
+        { weekday: 1, hour: 19, minute: 30, team: "Gold Judge Team" },
+        { weekday: 5, hour: 22, minute: 0, team: "Green Judge Team" }
+    ];
+    const SHOW_TIMEZONE = "Pacific/Auckland";
+
+    // Converts a wall-clock time expressed IN a named IANA timezone into the UTC instant (a real
+    // JS Date) it corresponds to. Vanilla JS has no direct "construct a Date from a timezone-local
+    // wall clock" function, so this uses iterative convergence instead: start from a naive guess
+    // (treating the wall-clock numbers as if they were already UTC), format that guess back out in
+    // the target timezone via Intl.DateTimeFormat, measure the gap between what came out and what
+    // we actually wanted, and nudge the guess by that gap. A couple of iterations is enough to
+    // converge even across a DST transition, since Pacific/Auckland only ever shifts by 1 hour.
+    function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
+        let guess = new Date(Date.UTC(year, month, day, hour, minute, 0, 0));
+        for (let i = 0; i < 3; i++) {
+            const parts = getZonedParts(guess, timeZone);
+            const wantedUtcMs = Date.UTC(year, month, day, hour, minute, 0, 0);
+            const gotUtcMs = Date.UTC(parts.year, parts.month, parts.day, parts.hour, parts.minute, 0, 0);
+            const diffMs = wantedUtcMs - gotUtcMs;
+            if (diffMs === 0) break;
+            guess = new Date(guess.getTime() + diffMs);
+        }
+        return guess;
+    }
+
+    // Reads the wall-clock date/time components of a UTC instant AS SEEN in a given timezone,
+    // using the browser's built-in ICU timezone database (handles NZST/NZDT transitions correctly
+    // without hardcoding any DST rules).
+    function getZonedParts(date, timeZone) {
+        const fmt = new Intl.DateTimeFormat("en-US", {
+            timeZone: timeZone,
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hour12: false
+        });
+        const partsArr = fmt.formatToParts(date);
+        const lookup = {};
+        partsArr.forEach(function (p) { lookup[p.type] = p.value; });
+        return {
+            year: parseInt(lookup.year, 10),
+            month: parseInt(lookup.month, 10) - 1,
+            day: parseInt(lookup.day, 10),
+            hour: lookup.hour === "24" ? 0 : parseInt(lookup.hour, 10),
+            minute: parseInt(lookup.minute, 10)
+        };
+    }
+
+    // Finds the next upcoming occurrence (as a real UTC Date, always >= now) of every entry in
+    // SHOW_SCHEDULE, sorted soonest-first. Walks the next 8 NZ-local calendar days looking for a
+    // matching weekday, which comfortably covers every entry regardless of where "now" falls in
+    // the week.
+    function getUpcomingShows(now) {
+        const nzNow = getZonedParts(now, SHOW_TIMEZONE);
+        const nzNowDate = new Date(Date.UTC(nzNow.year, nzNow.month, nzNow.day));
+        const results = [];
+        SHOW_SCHEDULE.forEach(function (show) {
+            let found = null;
+            for (let offset = 0; offset < 8; offset++) {
+                const candidateDay = new Date(nzNowDate.getTime() + offset * 86400000);
+                const candidateWeekday = candidateDay.getUTCDay();
+                if (candidateWeekday !== show.weekday) continue;
+                const candidateUtc = zonedTimeToUtc(
+                    candidateDay.getUTCFullYear(), candidateDay.getUTCMonth(), candidateDay.getUTCDate(),
+                    show.hour, show.minute, SHOW_TIMEZONE
+                );
+                if (candidateUtc.getTime() >= now.getTime()) {
+                    found = candidateUtc;
+                    break;
+                }
+            }
+            if (found) {
+                results.push({ team: show.team, utcDate: found });
+            }
+        });
+        results.sort(function (a, b) { return a.utcDate.getTime() - b.utcDate.getTime(); });
+        return results;
+    }
+
+    // Formats a UTC Date in the viewer's own local timezone (their browser's default, detected
+    // automatically) - falls back to a plain GMT/UTC string if local-timezone formatting somehow
+    // throws (per user's request: "if not convert it to GMT").
+    function formatLocalShowTime(utcDate) {
+        try {
+            return utcDate.toLocaleString(undefined, {
+                weekday: "long", month: "short", day: "numeric",
+                hour: "numeric", minute: "2-digit"
+            });
+        } catch (e) {
+            return utcDate.toUTCString().replace(":00 GMT", " GMT");
+        }
+    }
+
+    function clearStreamAdvertInterval() {
+        if (streamAdvertIntervalId) {
+            clearInterval(streamAdvertIntervalId);
+            streamAdvertIntervalId = null;
+        }
+    }
+
+    // Keeps the backend awake while the show is live (Render's free tier spins a service down
+    // after a stretch of inactivity, and the normal poll cadence on a quiet advert screen isn't
+    // frequent enough on its own to guarantee that never happens right as a show starts) - per
+    // user's request, this should only run DURING the show, not 24/7 off-air.
+    function maybeStartKeepalive() {
+        if (keepaliveIntervalId) return;
+        keepaliveIntervalId = setInterval(function () {
+            fetch(BACKEND_URL + "/api/status").catch(function () { /* best-effort, ignore */ });
+        }, 4 * 60 * 1000);
+    }
+
+    function maybeStopKeepalive() {
+        if (keepaliveIntervalId) {
+            clearInterval(keepaliveIntervalId);
+            keepaliveIntervalId = null;
+        }
+    }
+
+    function renderStreamAdvert() {
+        clearStreamAdvertInterval();
+        maybeStopKeepalive();
+
+        const upcoming = getUpcomingShows(new Date());
+        const next = upcoming[0];
+
+        let html = '<div class="stream-advert">';
+        html += '<div class="stream-advert-title">SECTOR 21 IS QUIET FOR NOW</div>';
+        html += '<div class="stream-advert-subtitle">The Big Heist is only active while the show is live. Here\'s when the Judges are back on duty:</div>';
+
+        if (next) {
+            html += '<div class="stream-advert-next-label">NEXT UP: ' + next.team + '</div>';
+            html += '<div class="stream-advert-countdown" id="stream-advert-countdown">--:--:--:--</div>';
+            html += '<div class="stream-advert-next-time">' + formatLocalShowTime(next.utcDate) + ' (your local time)</div>';
+        }
+
+        html += '<div class="stream-advert-schedule">';
+        upcoming.forEach(function (show) {
+            html += '<div class="stream-advert-schedule-row">' +
+                '<span class="stream-advert-schedule-team">' + show.team + '</span>' +
+                '<span class="stream-advert-schedule-time">' + formatLocalShowTime(show.utcDate) + '</span>' +
+                '</div>';
+        });
+        html += '</div>';
+
+        html += '<div class="stream-advert-footer">Moderators can force this panel live early with !panellive on.</div>';
+        html += '</div>';
+
+        document.getElementById("content").innerHTML = html;
+
+        if (next) {
+            const targetMs = next.utcDate.getTime();
+            const tick = function () {
+                const el = document.getElementById("stream-advert-countdown");
+                if (!el) {
+                    // Screen moved on (show went live, or panel re-rendered elsewhere) - stop ticking.
+                    clearStreamAdvertInterval();
+                    return;
+                }
+                const secondsLeft = Math.max(0, Math.floor((targetMs - Date.now()) / 1000));
+                const days = Math.floor(secondsLeft / 86400);
+                const hours = Math.floor((secondsLeft % 86400) / 3600);
+                const minutes = Math.floor((secondsLeft % 3600) / 60);
+                const seconds = secondsLeft % 60;
+                el.textContent = days + "d " + (hours < 10 ? "0" : "") + hours + "h " +
+                    (minutes < 10 ? "0" : "") + minutes + "m " + (seconds < 10 ? "0" : "") + seconds + "s";
+            };
+            tick();
+            streamAdvertIntervalId = setInterval(tick, 1000);
+        }
     }
 
     let lastKnownTopRowMode = null; // "pending" | "jailed" | "normal"

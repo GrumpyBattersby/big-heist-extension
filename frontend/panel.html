@@ -415,6 +415,79 @@
         opacity: 0.85;
         min-width: 26px;
     }
+    /* Sector 21 stream advert / countdown screen - shown instead of the character sheet whenever
+       the show isn't live (see renderStreamAdvert() in panel.js). */
+    .stream-advert {
+        text-align: center;
+        padding: 18px 12px;
+        color: #f0e6d2;
+    }
+    .stream-advert-title {
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        color: #ffcf4d;
+        margin-bottom: 8px;
+    }
+    .stream-advert-subtitle {
+        font-size: 13px;
+        opacity: 0.85;
+        margin-bottom: 16px;
+        line-height: 1.4;
+    }
+    .stream-advert-next-label {
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #b088f9;
+        margin-bottom: 6px;
+    }
+    .stream-advert-countdown {
+        font-size: 24px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        background: #2d1b4e;
+        border: 1px solid #b088f9;
+        border-radius: 8px;
+        padding: 10px 8px;
+        margin: 0 auto 8px;
+        max-width: 280px;
+        box-shadow: 0 0 12px rgba(176, 136, 249, 0.4);
+    }
+    .stream-advert-next-time {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-bottom: 20px;
+    }
+    .stream-advert-schedule {
+        border-top: 1px solid rgba(240, 230, 210, 0.25);
+        padding-top: 12px;
+        margin-bottom: 14px;
+    }
+    .stream-advert-schedule-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+        padding: 4px 4px;
+    }
+    .stream-advert-schedule-row:nth-child(odd) {
+        background: rgba(240, 230, 210, 0.05);
+        border-radius: 4px;
+    }
+    .stream-advert-schedule-team {
+        font-weight: 700;
+        opacity: 0.9;
+    }
+    .stream-advert-schedule-time {
+        opacity: 0.85;
+    }
+    .stream-advert-footer {
+        font-size: 11px;
+        opacity: 0.6;
+        font-style: italic;
+    }
     /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
        arrest alert) - makes it visually obvious something urgent just happened, distinct from
        Juan's Emporium's yellow/navy theme used everywhere else. */

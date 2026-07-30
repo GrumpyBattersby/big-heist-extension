@@ -64,10 +64,54 @@ function saveStore() {
 
 // ============================
 // HEALTH CHECK - useful for confirming the service is alive, and for uptime pings
-// to keep Render's free tier from sleeping if you want to try that
+// to keep Render's free tier from sleeping. The panel itself now hits this on a timer
+// whenever it considers the show "live" (see computeEffectiveLive() below) - see the
+// STREAM LIVE STATUS section just below for how "live" is decided.
 // ============================
 app.get('/api/status', (req, res) => {
     res.json({ status: 'ok', perpsStored: Object.keys(store).length });
+});
+
+// ============================
+// STREAM LIVE STATUS - lets the panel show a "next show" advert screen (with a countdown)
+// instead of the normal character sheet whenever the show's off-air, and switch back to normal
+// automatically the moment it's live. Two independent inputs combine into one effective value:
+//   - rawLive: set automatically by Streamer.bot - true the instant Stream Online fires, false
+//     the instant Stream Offline fires, and re-asserted true every ~1-2 min by Big Heist - Track
+//     Present Viewers while actually live (that action already only fires during a live stream,
+//     so piggybacking on it here means this self-heals within a couple minutes even if this
+//     backend restarts mid-show and loses its in-memory state).
+//   - overrideMode: 'auto' (default) trusts rawLive; 'on'/'off' force it either way regardless
+//     of rawLive, set via a moderator-only "!panellive on/off/auto" chat command in Streamer.bot
+//     (permission enforced by Streamer.bot's own trigger settings, not by this backend).
+// Both are pushed here the same way /api/push-data already works - a shared secret, not a viewer
+// identity, since only Streamer.bot (running on the streamer's own PC) ever calls this.
+// ============================
+let streamStatus = { rawLive: false, overrideMode: 'auto' }; // overrideMode: 'auto' | 'on' | 'off'
+
+function computeEffectiveLive() {
+    if (streamStatus.overrideMode === 'on') return true;
+    if (streamStatus.overrideMode === 'off') return false;
+    return !!streamStatus.rawLive;
+}
+
+app.post('/api/push-stream-status', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+    const { rawLive, overrideMode } = req.body;
+    if (typeof rawLive === 'boolean') streamStatus.rawLive = rawLive;
+    if (overrideMode === 'auto' || overrideMode === 'on' || overrideMode === 'off') streamStatus.overrideMode = overrideMode;
+    res.json({ ok: true, effectiveLive: computeEffectiveLive(), streamStatus });
+});
+
+// Not currently polled by the panel (my-data already carries `live` on every response - see
+// below), but kept as a standalone endpoint since it's a cheap, obvious thing to check by hand
+// (e.g. curl) while setting the Stream Online/Offline/override actions up in Streamer.bot.
+app.get('/api/stream-status', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ live: computeEffectiveLive(), overrideMode: streamStatus.overrideMode });
 });
 
 // ============================
@@ -333,16 +377,22 @@ app.get('/api/my-data', (req, res) => {
     }
 
     const perpData = store[identity.userId];
+    // Included on EVERY /api/my-data response (found or not) - the panel checks this before
+    // anything else and shows the Sector 21 advert/countdown screen whenever it's false,
+    // regardless of found/not-found. See computeEffectiveLive() above.
+    const live = computeEffectiveLive();
 
     if (!perpData) {
         return res.json({
             found: false,
+            live: live,
             message: "No perp data found yet - have you run !becomeperp on stream?"
         });
     }
 
     res.json({
         found: true,
+        live: live,
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
