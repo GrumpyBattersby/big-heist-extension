@@ -53,6 +53,11 @@
     // them will still 404 (broken image icon) until real art is uploaded per heist/crew name.
     const HEISTS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/heists";
     const CREWS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/crews";
+    // Team event poster art for the Sector 21 offline advert screen - one per SHOW_SCHEDULE team
+    // color (Red/Gold/Green), sourced from the streamer's "Discord Ep Events" posters. Same
+    // GitHub Pages hosting pattern as everything above. Filenames are exactly "<Color> Team Event
+    // Poster.png" as uploaded, e.g. "Red Team Event Poster.png".
+    const TEAM_POSTERS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/team-posters";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -488,6 +493,18 @@
         }
     }
 
+    // SHOW_SCHEDULE team names are "<Color> Perp Team" / "<Color> Judge Team" - the poster art is
+    // filed per COLOR only (one poster represents that whole team regardless of Perp/Judge), so
+    // this just pulls the leading word off the team name to build the image URL. Returns null (no
+    // <img> rendered) if the team name doesn't start with a recognized color, rather than guessing
+    // at a filename that doesn't exist and showing a broken-image icon.
+    const TEAM_POSTER_COLORS = ["Red", "Gold", "Green"];
+    function teamPosterImageUrl(teamName) {
+        const color = TEAM_POSTER_COLORS.find(function (c) { return teamName.indexOf(c) === 0; });
+        if (!color) return null;
+        return TEAM_POSTERS_BASE_URL + "/" + encodeURIComponent(color + " Team Event Poster.png");
+    }
+
     function clearStreamAdvertInterval() {
         if (streamAdvertIntervalId) {
             clearInterval(streamAdvertIntervalId);
@@ -525,6 +542,13 @@
         html += '<div class="stream-advert-subtitle">The Big Heist is only active while the show is live. Here\'s when the Judges are back on duty:</div>';
 
         if (next) {
+            const posterUrl = teamPosterImageUrl(next.team);
+            if (posterUrl) {
+                // onerror hides just the frame (not the rest of the advert) if that color's
+                // poster hasn't been uploaded yet - same graceful-degradation pattern used for
+                // getaway art elsewhere in this file, rather than showing a broken-image icon.
+                html += '<div class="stream-advert-poster-frame"><img src="' + posterUrl + '" alt="' + escapeHtml(next.team) + '" onerror="this.parentElement.style.display=\'none\'"></div>';
+            }
             html += '<div class="stream-advert-next-label">NEXT UP: ' + next.team + '</div>';
             html += '<div class="stream-advert-countdown" id="stream-advert-countdown">--:--:--:--</div>';
             html += '<div class="stream-advert-next-time">' + formatLocalShowTime(next.utcDate) + ' (your local time)</div>';
