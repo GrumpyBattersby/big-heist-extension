@@ -691,6 +691,27 @@
         background: #24506f;
     }
 
+    /* Small persistent Privacy/Terms links, same "outside #content" placement as the glossary
+       button above - Twitch review expects a viewer to be able to actually reach these from
+       inside the extension, not just have the URLs filed in the developer console. */
+    .legal-footer {
+        text-align: center;
+        margin-top: 6px;
+        font-size: 10px;
+        letter-spacing: 0.5px;
+    }
+    .legal-footer a {
+        color: #7fa8c4;
+        text-decoration: none;
+    }
+    .legal-footer a:hover {
+        text-decoration: underline;
+    }
+    .legal-footer span {
+        color: #3a5a72;
+        margin: 0 5px;
+    }
+
     #glossary-overlay {
         display: none;
         padding: 10px;
@@ -786,6 +807,11 @@
     </div>
     <div id="glossary-overlay"></div>
     <button class="glossary-open-button" id="glossary-open-button" type="button">Item Glossary</button>
+    <div class="legal-footer">
+        <a href="https://grumpybattersby.github.io/big-heist-extension/privacy.html" target="_blank" rel="noopener">Privacy Notice</a>
+        <span>&middot;</span>
+        <a href="https://grumpybattersby.github.io/big-heist-extension/terms.html" target="_blank" rel="noopener">Terms of Service</a>
+    </div>
     <div class="hazard-strip"></div>
 </div>
 

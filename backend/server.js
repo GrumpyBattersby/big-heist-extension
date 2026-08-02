@@ -159,7 +159,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice, bagmanResultNotice, heistRunning, assignedJudgeName, judgeIsPlaying, isWatchingJudge, assignedPerpName, perpIsPlaying } = req.body;
+    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice, bagmanResultNotice, mugshotPickError, heistRunning, assignedJudgeName, judgeIsPlaying, isWatchingJudge, assignedPerpName, perpIsPlaying } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -194,6 +194,7 @@ app.post('/api/push-data', (req, res) => {
         isTestAccount: !!isTestAccount,
         pickpocketNotice: pickpocketNotice || null,
         bagmanResultNotice: bagmanResultNotice || null,
+        mugshotPickError: mugshotPickError || null,
         heistRunning: !!heistRunning,
         shopBannedUntil: shopBannedUntil || 0,
         offendedBannedUntil: offendedBannedUntil || 0,
@@ -281,18 +282,19 @@ app.post('/api/youtube-link/start', (req, res) => {
     pruneExpiredLinkSessions();
 
     const sessionToken = crypto.randomBytes(24).toString('hex');
-    // Short, easy to type in a chat message under pressure - 4 digits is plenty since codes
-    // are single-use and expire quickly. Re-rolled below if it collides with another still-
-    // pending (unclaimed) code, so two viewers loading the panel around the same moment can
-    // never end up with the same code live at once - whoever typed !link first would otherwise
-    // risk claiming the wrong person's session.
+    // 6 digits (bumped from 4, 2026-07-31) - still short enough to type in a chat message under
+    // pressure, but a million-code space instead of ten thousand makes a leaked/visible code far
+    // harder for anyone else to blind-guess within the TTL window. Re-rolled below if it collides
+    // with another still-pending (unclaimed) code, so two viewers loading the panel around the
+    // same moment can never end up with the same code live at once - whoever typed !link first
+    // would otherwise risk claiming the wrong person's session.
     const pendingCodes = new Set(
         Object.values(youtubeLinkSessions).filter(s => !s.claimed).map(s => s.code)
     );
-    let code = String(crypto.randomInt(1000, 10000));
+    let code = String(crypto.randomInt(100000, 1000000));
     let rerolls = 0;
     while (pendingCodes.has(code) && rerolls < 20) {
-        code = String(crypto.randomInt(1000, 10000));
+        code = String(crypto.randomInt(100000, 1000000));
         rerolls++;
     }
 
@@ -449,6 +451,7 @@ app.get('/api/my-data', (req, res) => {
         isTestAccount: perpData.isTestAccount || false,
         pickpocketNotice: perpData.pickpocketNotice || null,
         bagmanResultNotice: perpData.bagmanResultNotice || null,
+        mugshotPickError: perpData.mugshotPickError || null,
         heistRunning: !!perpData.heistRunning,
         shopBannedUntil: perpData.shopBannedUntil || 0,
         offendedBannedUntil: perpData.offendedBannedUntil || 0,

@@ -1357,6 +1357,31 @@
             bagmanNoticeDismissed = false;
         }
 
+        // Lost the mugshot claim race - someone else's File.Move won first. Become Perp's own
+        // registration guard used to make "!becomeperp again" a dead end for this exact user (see
+        // isRetryPick in Heist - Become Perp), so this used to require a manual chat retype with
+        // no real guarantee it would even work. Now it's just a button: TRY AGAIN re-runs
+        // becomePerp server-side, which redraws 3 fresh candidates and clears this notice itself
+        // (Become Perp sets mugshotPickError back to "" as part of the retry path) - no client-side
+        // dismiss timer needed, the notice just disappears on the next successful poll.
+        if (data.mugshotPickError && data.mugshotPickError.message) {
+            document.getElementById("rest-of-content").innerHTML =
+                '<div class="alert-frame-purple alert-takeover-box">' +
+                '<div class="section-title">That mugshot\'s taken.</div>' +
+                '<div class="juan-quote">' + escapeHtml(data.mugshotPickError.message) + '</div>' +
+                '<button class="panel-urgent-button" id="panel-mugshot-try-again">Try Again</button>' +
+                '</div>';
+
+            const tryAgainBtn = document.getElementById("panel-mugshot-try-again");
+            if (tryAgainBtn) {
+                tryAgainBtn.addEventListener("click", function () {
+                    tryAgainBtn.disabled = true;
+                    queueAction("becomePerp", {});
+                });
+            }
+            return;
+        }
+
         // Big Heist vote round - takes over the whole panel the same way the running-heist
         // cinematic below does, since there's nothing else useful to show while 4 candidates are
         // up for a vote. Bagman choice/result above still take priority (same reasoning as the
