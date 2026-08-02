@@ -1425,7 +1425,14 @@
             const runningBh = data.bigHeist;
             let runningHtml = '<div class="section-title">The Big Heist</div>';
             if (runningBh.heistKey && HEIST_IMAGES[runningBh.heistKey]) {
-                runningHtml += '<div class="heist-banner-frame"><img src="' + HEIST_IMAGES[runningBh.heistKey] + '" alt="' + escapeHtml(runningBh.heistName || '') + '"></div>';
+                // Was a bare relative filename ("heist-bankvault.png") with no BASE_URL prefix -
+                // the ONLY reason panel.zip still had to bundle every heist banner image locally.
+                // On Twitch, a relative src resolves against Twitch's own Asset Hosting origin, so
+                // this "worked" only because those exact files sat next to panel.html in the zip;
+                // on the standalone/YouTube build it was silently broken the whole time (relative
+                // to grumpybattersby.github.io/big-heist-extension/panelfiles/, where no such file
+                // exists). Matches the already-correct prefixed usage at the vote-winner reveal.
+                runningHtml += '<div class="heist-banner-frame"><img src="' + HEISTS_BASE_URL + '/' + HEIST_IMAGES[runningBh.heistKey] + '" alt="' + escapeHtml(runningBh.heistName || '') + '"></div>';
             }
             runningHtml += '<div class="juan-quote">' + escapeHtml(runningBh.heistName || 'The heist') + ' is underway. Sit tight - the crew\'s fate is being decided live.</div>';
             // Getaway ride: show the committed vehicle's escape art in place of the old text-only
