@@ -165,6 +165,11 @@
     // Same pattern again for Lay Low - its own variable so it can never collide with a buy/sell
     // confirmation landing at the same moment.
     let layLowConfirmationMessage = null;
+    // "Skip !becomeperp, pick Male/Female on first load" flow - true from the moment a gender
+    // button is clicked until the account actually shows up as found (PerpData created server
+    // side). Twitch-authorized viewers only skip the chat command entirely; see the !found
+    // branch in fetchMyData for why YouTube viewers still see the old plain message instead.
+    let becomePerpPending = false;
 
     // Twitch Extensions can't run on YouTube at all - the standalone build (panel-standalone.html,
     // same panel.js) is served without the twitch-ext.min.js helper script, so `Twitch` simply
@@ -364,10 +369,26 @@
             maybeStartKeepalive();
 
             if (!result.data.found) {
-                document.getElementById("content").innerHTML =
-                    '<div id="status-message">' + result.data.message + '</div>';
+                // Twitch Extension viewers have already granted Identity Link just to see this
+                // panel at all (see showShareIdentityPrompt above) - there's no reason to also
+                // make them type a chat command afterward when the panel already knows exactly
+                // who they are. YouTube viewers reach this same found:false state too (via the
+                // link-code session), but keep the old plain message: they still need to type
+                // !becomeperp on THEIR path since that's also how they get told the standalone
+                // panel URL in the first place (see the walkthrough script) - only the Twitch
+                // in-panel command is being skipped here, not the YouTube chat flow.
+                if (typeof Twitch !== "undefined" && Twitch.ext) {
+                    renderBecomePerpPrompt();
+                } else {
+                    document.getElementById("content").innerHTML =
+                        '<div id="status-message">' + result.data.message + '</div>';
+                }
                 return;
             }
+            // Real data landed - any become-perp click that was in flight has resolved one way
+            // or another (either this account now exists, or a stale pending flag needs
+            // clearing so a FUTURE first-time viewer doesn't inherit it).
+            becomePerpPending = false;
             currentUserId = result.data.userId;
             lastFetchedData = result.data;
             renderPerpSheet(result.data);
@@ -389,6 +410,48 @@
         document.getElementById("share-btn").addEventListener("click", function () {
             Twitch.ext.actions.requestIdShare();
         });
+    }
+
+    // "Skip !becomeperp" first-load prompt for authorized-but-not-yet-registered Twitch viewers -
+    // see the found:false branch in fetchMyData for why this only applies there. Sends the exact
+    // same "becomePerp" panel action type Process Panel Actions already handles for the TRY AGAIN
+    // button, just with an explicit gender in the payload instead of falling back to whatever's
+    // already on file - Heist - Become Perp itself needed zero changes for this to work.
+    function renderBecomePerpPrompt() {
+        if (becomePerpPending) {
+            document.getElementById("content").innerHTML =
+                '<div id="status-message">Becoming a perp in Sector 21 - hang tight, this takes a few seconds...</div>';
+            return;
+        }
+
+        document.getElementById("content").innerHTML =
+            '<div id="status-message">Welcome to Sector 21. Pick a look to get started:</div>' +
+            '<div style="text-align:center; margin-top:10px;">' +
+            '<button class="panel-shop-button" id="become-perp-male-btn" style="margin-right:8px;">Male</button>' +
+            '<button class="panel-shop-button" id="become-perp-female-btn">Female</button>' +
+            '</div>';
+
+        function pickGender(gender) {
+            // Disable both immediately - same double-click protection used everywhere else a
+            // panel button kicks off a one-shot server action (Oi, Arrest, mugshot Choose, etc).
+            const maleBtn = document.getElementById("become-perp-male-btn");
+            const femaleBtn = document.getElementById("become-perp-female-btn");
+            if (maleBtn) maleBtn.disabled = true;
+            if (femaleBtn) femaleBtn.disabled = true;
+
+            // lastFetchedData is never set at this point - it only gets populated once
+            // result.data.found is true, which is precisely the state we don't have yet - so
+            // just re-render this same prompt, which now shows the "hang tight" message above.
+            becomePerpPending = true;
+            renderBecomePerpPrompt();
+
+            queueAction("becomePerp", { gender: gender });
+        }
+
+        const maleBtn = document.getElementById("become-perp-male-btn");
+        if (maleBtn) maleBtn.addEventListener("click", function () { pickGender("Male"); });
+        const femaleBtn = document.getElementById("become-perp-female-btn");
+        if (femaleBtn) femaleBtn.addEventListener("click", function () { pickGender("Female"); });
     }
 
     // ============================
