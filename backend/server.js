@@ -159,7 +159,7 @@ app.post('/api/push-data', (req, res) => {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
-    const { userId, name, points, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice, bagmanResultNotice, mugshotPickError, heistRunning, assignedJudgeName, judgeIsPlaying, isWatchingJudge, assignedPerpName, perpIsPlaying } = req.body;
+    const { userId, name, points, kudos, inventory, skills, lastCrime, crimeStatus, cubeReleaseAt, achievements, pendingMugshotPick, candidateHashes, mugshotVersion, mugshotHash, panelOverride, pickpocketedTargets, isTestAccount, pickpocketNotice, shopBannedUntil, offendedBannedUntil, personalHeat, showHeat, isLayingLow, heatReducingItems, robberyAttemptsRemaining, bigHeist, pendingItemMove, pendingBagmanChoice, bagmanResultNotice, mugshotPickError, heistRunning, assignedJudgeName, judgeIsPlaying, isWatchingJudge, assignedPerpName, perpIsPlaying } = req.body;
 
     if (!userId) {
         return res.status(400).json({ error: 'userId is required' });
@@ -168,6 +168,12 @@ app.post('/api/push-data', (req, res) => {
     store[userId] = {
         name: name || userId,
         points: points || 0,
+        // Reputation earned from Robbery/Big Heist/Graffiti - see Big Heist - Sync To Extension
+        // for where this is read from the player's persisted var and pushed here. This field was
+        // missing from both the push-data destructure above and the my-data response below when
+        // the Kudos feature was first built, which is why it always showed 0 on the panel
+        // regardless of what Streamer.bot actually had recorded server-side.
+        kudos: kudos || 0,
         inventory: inventory || {},
         skills: skills || {},
         lastCrime: lastCrime || '',
@@ -436,6 +442,7 @@ app.get('/api/my-data', (req, res) => {
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
+        kudos: perpData.kudos || 0,
         inventory: perpData.inventory,
         skills: perpData.skills,
         lastCrime: perpData.lastCrime,
