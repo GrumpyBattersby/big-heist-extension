@@ -203,6 +203,7 @@
     // at script load) works regardless of which of the two paths above just ran, and survives
     // every one of renderPerpSheet's many innerHTML rebuilds of #content untouched.
     setupItemGlossary();
+    setupAchievementsGallery();
 
     // Gets a fresh short code from the backend and shows it, then polls until the viewer has
     // typed !link <code> in YouTube chat (handled server-side by Big Heist - YouTube Panel Link).
@@ -3954,6 +3955,116 @@
         const div = document.createElement('div');
         div.textContent = str;
         return div.innerHTML;
+    }
+
+    // ============================
+    // ACHIEVEMENT GALLERY - a full catalog of every achievement in the game (not just Block War),
+    // so perps can browse everything there is to earn, a bit like the Item Glossary below. Purely
+    // a client-side static list (unlike the item glossary there's no backend catalog endpoint for
+    // this - achievement definitions don't change at runtime), cross-referenced against the
+    // current viewer's own unlocked list (data.achievements, already included in every regular
+    // poll - see renderPerpSheet's achievements-row). A handful are "shadowed" (shadowed: true) -
+    // until unlocked they show as a "???" mystery card with the real name/description withheld,
+    // so what they actually require stays a surprise. Any achievement key a player has unlocked
+    // that ISN'T in this catalog (e.g. a per-heist "Completed: X" grant) still shows up, appended
+    // under "Other Achievements", so nothing already earned ever goes missing from view.
+    // ============================
+    const ACHIEVEMENT_CATALOG = [
+        { key: "Rich", name: "Rich", desc: "Stack up 100,000 Kudos.", shadowed: false },
+        { key: "First Failure", name: "First Failure", desc: "Get busted on a job for the first time. Every legend has a rap sheet.", shadowed: false },
+        { key: "Pickpocket Pro", name: "Pickpocket Pro", desc: "Land 10 successful pickpockets.", shadowed: false },
+        { key: "Pickpocket Veteran", name: "Pickpocket Veteran", desc: "Land 100 successful pickpockets.", shadowed: false },
+        { key: "First Big Heist", name: "First Big Heist", desc: "Take part in your first Big Heist.", shadowed: false },
+        { key: "Born Unlucky", name: "Born Unlucky", desc: "Get arrested 5 times.", shadowed: false },
+        { key: "Cube Yoyo", name: "Cube Yoyo", desc: "Get arrested 20 times. The Isocubes know you by name now.", shadowed: false },
+        { key: "Busted!", name: "Busted!", desc: "Get arrested for the very first time.", shadowed: false },
+        { key: "Robbery Pro", name: "Robbery Pro", desc: "Pull off 10 successful robberies.", shadowed: false },
+        { key: "Robber Veteran", name: "Robber Veteran", desc: "Pull off 100 successful robberies.", shadowed: false },
+        { key: "Clean Getaway", name: "Clean Getaway", desc: "Escape a Big Heist without getting caught.", shadowed: false },
+        { key: "Smooth Criminal", name: "Smooth Criminal", desc: "Complete 5 Big Heists, regardless of which ones.", shadowed: false },
+        { key: "Enlisted", name: "Enlisted", desc: "Take part in your first Block War.", shadowed: false },
+        { key: "First Blood", name: "First Blood", desc: "Win your first Block War.", shadowed: false },
+        { key: "Block Captain", name: "Block Captain", desc: "Win 5 Block Wars.", shadowed: false },
+        { key: "Block Warlord", name: "Block Warlord", desc: "Win 10 Block Wars.", shadowed: false },
+        { key: "Last Block Standing", name: "Last Block Standing", desc: "Win 25 Block Wars. A living legend of the concrete jungle.", shadowed: false },
+        { key: "Survivor", name: "Survivor", desc: "See a Block War through to the end without fleeing.", shadowed: false },
+        { key: "Coward's Way Out", name: "Coward's Way Out", desc: "Flee from a Block War by not voting before the panel timer runs out.", shadowed: true },
+        { key: "Too Hot for the Judges", name: "Too Hot for the Judges", desc: "Be part of a Block War that gets broken up by the Judges before either side wins.", shadowed: true },
+        { key: "Glutton for Punishment", name: "Glutton for Punishment", desc: "Lose 5 Block Wars.", shadowed: true },
+        { key: "Turncoat", name: "Turncoat", desc: "Fight for both Wagner Block and Ezquerra Block across different wars.", shadowed: true }
+    ];
+
+    function setupAchievementsGallery() {
+        const openBtn = document.getElementById("achievements-open-button");
+        if (!openBtn) return;
+
+        openBtn.addEventListener("click", function () {
+            const terminal = document.querySelector(".terminal");
+            const overlay = document.getElementById("achievements-overlay");
+            if (!terminal || !overlay) return;
+
+            terminal.classList.add("achievements-active");
+            overlay.classList.add("achievements-visible");
+            renderAchievementsGallery();
+        });
+    }
+
+    function wireAchievementsCloseButton() {
+        const closeBtn = document.getElementById("achievements-close-button");
+        if (closeBtn) {
+            closeBtn.addEventListener("click", function () {
+                const terminal = document.querySelector(".terminal");
+                const overlay = document.getElementById("achievements-overlay");
+                if (terminal) terminal.classList.remove("achievements-active");
+                if (overlay) overlay.classList.remove("achievements-visible");
+            });
+        }
+    }
+
+    function renderAchievementsGallery() {
+        const overlay = document.getElementById("achievements-overlay");
+        if (!overlay) return;
+
+        const unlocked = (lastFetchedData && Array.isArray(lastFetchedData.achievements)) ? lastFetchedData.achievements : [];
+        const unlockedSet = {};
+        unlocked.forEach(function (a) { unlockedSet[a] = true; });
+
+        const catalogKeys = {};
+        ACHIEVEMENT_CATALOG.forEach(function (a) { catalogKeys[a.key] = true; });
+        const otherUnlocked = unlocked.filter(function (a) { return !catalogKeys[a]; });
+
+        let html = '<div class="section-title">Achievements</div>';
+        html += '<div class="items-text">' + unlocked.length + ' of ' + ACHIEVEMENT_CATALOG.length + ' unlocked'
+            + (otherUnlocked.length > 0 ? ' (plus ' + otherUnlocked.length + ' more)' : '') + '.</div>';
+        html += '<div id="achievements-list">';
+
+        ACHIEVEMENT_CATALOG.forEach(function (a) {
+            const isUnlocked = !!unlockedSet[a.key];
+            const isMystery = a.shadowed && !isUnlocked;
+            let cls = "achievement-card " + (isUnlocked ? "achievement-unlocked" : "achievement-locked");
+            if (isMystery) cls += " achievement-mystery";
+            html += '<div class="' + cls + '">';
+            html += '<div class="achievement-card-name">' + (isMystery ? '???' : escapeHtml(a.name)) + '</div>';
+            html += '<div class="achievement-card-desc">' + (isMystery ? 'A mystery achievement - keep playing to find out what it takes.' : escapeHtml(a.desc)) + '</div>';
+            html += '<div class="achievement-card-status">' + (isUnlocked ? 'Unlocked' : 'Locked') + '</div>';
+            html += '</div>';
+        });
+
+        if (otherUnlocked.length > 0) {
+            html += '<div class="section-title">Other Achievements</div>';
+            otherUnlocked.forEach(function (a) {
+                html += '<div class="achievement-card achievement-unlocked">';
+                html += '<div class="achievement-card-name">' + escapeHtml(humanize(a)) + '</div>';
+                html += '<div class="achievement-card-status">Unlocked</div>';
+                html += '</div>';
+            });
+        }
+
+        html += '</div>';
+        html += '<button class="panel-back-button" id="achievements-close-button">&larr; Close</button>';
+
+        overlay.innerHTML = html;
+        wireAchievementsCloseButton();
     }
 
     // ============================
