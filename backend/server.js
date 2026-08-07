@@ -151,6 +151,47 @@ app.post('/api/push-heist-vote', (req, res) => {
 });
 
 // ============================
+// BLOCK WAR - two chat-formed teams (Wagner Block vs Ezquerra Block) vote Attack/Defend, then
+// Streamer.bot resolves the fight in rounds. Same GLOBAL-state pattern as heistVote above (one
+// war for the whole show, not per-viewer) - Streamer.bot owns the source of truth
+// (BlockWarState global var) and pushes its full current snapshot here on every change (team
+// assignment, each vote, each combat round, and the final result).
+// ============================
+let blockWar = {
+    active: false,
+    phase: 'idle',          // 'voting' | 'combat' | 'ended'
+    teams: {},               // { Wagner: [userId, ...], Ezquerra: [userId, ...] }
+    names: {},                // userId -> display name
+    votes: {},                // userId -> 'attack' | 'defense'
+    attackScore: {},           // { Wagner: number, Ezquerra: number }
+    defenseScore: {},           // { Wagner: number, Ezquerra: number }
+    votingEndsAt: null,          // Unix seconds
+    round: 0,
+    winner: null                // 'Wagner' | 'Ezquerra' | 'brokenup' | null
+};
+
+app.post('/api/push-block-war', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+    const { active, phase, teams, names, votes, attackScore, defenseScore, votingEndsAt, round, winner } = req.body;
+    blockWar = {
+        active: !!active,
+        phase: phase || 'idle',
+        teams: (teams && typeof teams === 'object') ? teams : {},
+        names: (names && typeof names === 'object') ? names : {},
+        votes: (votes && typeof votes === 'object') ? votes : {},
+        attackScore: (attackScore && typeof attackScore === 'object') ? attackScore : {},
+        defenseScore: (defenseScore && typeof defenseScore === 'object') ? defenseScore : {},
+        votingEndsAt: votingEndsAt || null,
+        round: typeof round === 'number' ? round : 0,
+        winner: winner || null
+    };
+    res.json({ ok: true, blockWar });
+});
+
+// ============================
 // PUSH DATA - called by Streamer.bot whenever a perp's inventory or skills change
 // ============================
 app.post('/api/push-data', (req, res) => {
@@ -431,6 +472,7 @@ app.get('/api/my-data', (req, res) => {
             found: false,
             live: live,
             heistVote: heistVote,
+            blockWar: blockWar,
             message: "No perp data found yet - have you run !becomeperp on stream?"
         });
     }
@@ -439,6 +481,7 @@ app.get('/api/my-data', (req, res) => {
         found: true,
         live: live,
         heistVote: heistVote,
+        blockWar: blockWar,
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
