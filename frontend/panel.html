@@ -561,6 +561,35 @@
         color: #ffcf4d;
         margin-bottom: 4px;
     }
+    /* Heist vote candidate's difficulty badge - same 4-tier EASY/MEDIUM/HARD/NEAR IMPOSSIBLE
+       rating (and matching colors) as the OBS card's Stroke filter outline, so a viewer glancing
+       at the panel sees the same color language as the stream overlay. Separate from the existing
+       7-tier .difficulty-* classes above (those are Robbery's own scale, not this one). */
+    .heist-vote-difficulty {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-bottom: 6px;
+    }
+    .heist-difficulty-easy {
+        background: #234d27;
+        color: #4fc72e;
+    }
+    .heist-difficulty-medium {
+        background: #4d3b12;
+        color: #ff8c00;
+    }
+    .heist-difficulty-hard {
+        background: #4d1414;
+        color: #dc1414;
+    }
+    .heist-difficulty-near-impossible {
+        background: #4d1435;
+        color: #ff1493;
+    }
     .heist-vote-desc {
         font-size: 12px;
         opacity: 0.85;
@@ -587,6 +616,58 @@
         font-weight: 700;
         color: #7fd77f;
         margin-bottom: 8px;
+    }
+    /* BLOCK WAR - full-panel takeover shown to anyone assigned to a team while a war is active
+       (see renderBlockWarTakeover in panel.js). Kept visually distinct (dark red/black) from the
+       heist-vote takeover above so the two are never mistaken for each other mid-stream. */
+    .blockwar-title {
+        font-size: 17px;
+        font-weight: 800;
+        color: #ff4d4d;
+        text-align: center;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+    }
+    /* Team art ("Wagner Block.png" / "Ezquerra Block.png") shown once a viewer's assigned to a
+       block - see BLOCKWAR_BASE_URL in panel.js. */
+    .blockwar-team-image {
+        display: block;
+        width: 100%;
+        max-width: 260px;
+        margin: 0 auto 10px;
+        border-radius: 6px;
+    }
+    .blockwar-team-name {
+        font-size: 14px;
+        font-weight: 800;
+        text-align: center;
+        margin-bottom: 10px;
+        padding: 4px 0;
+        border-radius: 4px;
+    }
+    .blockwar-team-wagner { color: #4fa8ff; background: #142a4d; }
+    .blockwar-team-ezquerra { color: #ff9d4d; background: #4d2e14; }
+    .blockwar-countdown {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.85;
+        margin-bottom: 12px;
+    }
+    .blockwar-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin-bottom: 10px;
+    }
+    .blockwar-buttons button {
+        flex: 1;
+        max-width: 130px;
+    }
+    .blockwar-status-line {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.9;
+        line-height: 1.5;
     }
     .heist-vote-button {
         width: 100%;
