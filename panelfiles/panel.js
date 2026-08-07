@@ -58,6 +58,10 @@
     // GitHub Pages hosting pattern as everything above. Filenames are exactly "<Color> Team Event
     // Poster.png" as uploaded, e.g. "Red Team Event Poster.png".
     const TEAM_POSTERS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/team-posters";
+    // Block War team art ("Wagner Block.png" / "Ezquerra Block.png") - shown in the panel takeover
+    // once a viewer's been assigned to a block. Same GitHub Pages hosting pattern as everything
+    // above, in a new "blockwar" folder.
+    const BLOCKWAR_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/blockwar";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -114,6 +118,9 @@
     // inventory, filtered server-side down to just heatReducingItems).
     let showLayLowBrowser = false;
     let showRobberyPicker = false;
+    // Graffiti size picker - same pure client-side toggle pattern as showRobberyPicker, but with
+    // a static 3-button (small/medium/large) list instead of a Block-dependent category fetch.
+    let showGraffitiPicker = false;
     let showBigHeistView = false;
     // Trade flow - client-side wizard (target -> what you're offering -> what you want
     // back) that ends by queueing "proposeTrade". Everything AFTER that point (both
@@ -170,6 +177,12 @@
     // side). Twitch-authorized viewers only skip the chat command entirely; see the !found
     // branch in fetchMyData for why YouTube viewers still see the old plain message instead.
     let becomePerpPending = false;
+
+    // Optimistic double-click guard for Block War's Attack/Defend buttons - same pattern as
+    // becomePerpPending above. Set the instant a choice is clicked (before the server round-trip
+    // confirms it via blockWar.votes), cleared once fresh data actually shows this userId as
+    // having voted (or once the war itself is no longer active, in case something goes wrong).
+    let blockWarVotePending = null; // null | 'attack' | 'defense'
 
     // Twitch Extensions can't run on YouTube at all - the standalone build (panel-standalone.html,
     // same panel.js) is served without the twitch-ext.min.js helper script, so `Twitch` simply
@@ -682,12 +695,18 @@
     let pickpocketPending = false;
     let pickpocketPendingTargetName = null;
 
+    // Same idea again, for Graffiti - shown the INSTANT a size is picked, using the same
+    // instant-feedback top-row icon treatment as pickpocketPending (Tag icon.png in place of
+    // pickpocket-alert.png). Cleared the same way - a fresh pickpocketNotice arriving (the
+    // shared toast field every crime action writes to) always means the attempt resolved.
+    let graffitiPending = false;
+
     // Per user's follow-up - the "settling up" greyed-out state on the Rob/Pickpocket buttons
     // should only apply to whichever action was actually just run, not both at once (they share
     // the same underlying pickpocketNotice toast field, so hasFreshNotice alone can't tell them
     // apart). Set the instant the real queueAction fires for either action; read alongside
     // hasFreshNotice at render time so only the matching button greys out.
-    let lastCrimeAction = null; // "robbery" | "pickpocket" | null
+    let lastCrimeAction = null; // "robbery" | "pickpocket" | "graffiti" | null
 
     // Per user's request - a toggle on the robbery picker for whether to actually USE a carried
     // Gun on the job, separate from just owning one. Defaults to true (matches the old always-use-
@@ -968,10 +987,21 @@
         const hv = data.heistVote;
         const myVote = hv.votes && currentUserId ? hv.votes[currentUserId] : null;
 
+        const candidateCount = (hv.candidates || []).length;
         let html = '<div class="section-title">Sector 21 - Pick Tonight\'s Big Heist</div>';
-        html += '<div class="juan-quote">4 jobs are on the table. Vote for the one you want to pull tonight - most votes when the clock runs out wins.</div>';
+        html += '<div class="juan-quote">' + candidateCount + ' job' + (candidateCount === 1 ? '' : 's') + ' on the table. Vote for the one you want to pull tonight - most votes when the clock runs out wins.</div>';
         html += '<div class="heist-vote-countdown" id="heist-vote-countdown">--:--</div>';
         html += '<div class="heist-vote-grid">';
+
+        // Same 4-tier rating as the OBS card's difficulty badge/stroke color - maps to the same
+        // CSS classes defined for .heist-vote-difficulty above (falls back to the HARD look if a
+        // future rating value shows up that isn't one of the 4 known ones).
+        const HEIST_DIFFICULTY_CLASS = {
+            'EASY': 'heist-difficulty-easy',
+            'MEDIUM': 'heist-difficulty-medium',
+            'HARD': 'heist-difficulty-hard',
+            'NEAR IMPOSSIBLE': 'heist-difficulty-near-impossible'
+        };
 
         (hv.candidates || []).forEach(function (c) {
             const voteCount = hv.votes ? Object.values(hv.votes).filter(function (v) { return v === c.heistKey; }).length : 0;
@@ -984,6 +1014,10 @@
             }
             html += '<div class="heist-vote-votes">' + voteCount + ' VOTE' + (voteCount === 1 ? '' : 'S') + '</div>';
             html += '<div class="heist-vote-title">' + escapeHtml(c.heistName || c.heistKey) + '</div>';
+            if (c.rating) {
+                const difficultyClass = HEIST_DIFFICULTY_CLASS[c.rating] || 'heist-difficulty-hard';
+                html += '<div class="heist-vote-difficulty ' + difficultyClass + '">' + escapeHtml(c.rating) + '</div>';
+            }
             html += '<div class="heist-vote-desc">' + escapeHtml(c.description || '') + '</div>';
             html += '<div class="heist-vote-stats">' +
                 '<span>MIN CREW <strong>' + (c.minCrew != null ? c.minCrew : '?') + '</strong></span>' +
@@ -1149,6 +1183,106 @@
         });
     }
 
+    // ============================
+    // BLOCK WAR - full-panel takeover for anyone Streamer.bot assigned to a team (checked by
+    // userId membership in data.blockWar.teams.Wagner / .Ezquerra - team assignment happens once,
+    // at war start, off everyone present in chat at that moment; someone who joins chat after the
+    // war has already started simply isn't a participant and never sees this). Three states:
+    //   1. phase "voting", not yet voted - show which block they're on and the Attack/Defend
+    //      buttons plus a live countdown.
+    //   2. phase "voting", already voted - buttons gone, just the block + "hang tight" message,
+    //      per the user's spec ("the options disappear... they're just left with the block war
+    //      image").
+    //   3. phase "combat" or "ended" - the fight itself plays out on stream (OBS cinematic text +
+    //      stroke filters), so the panel just shows a simple "watch the stream" holding message;
+    //      once phase is "ended" it also shows the final win/loss line for their own block.
+    // ============================
+    function renderBlockWarTakeover(data, myUserId) {
+        const bw = data.blockWar;
+        const onWagner = bw.teams && Array.isArray(bw.teams.Wagner) && bw.teams.Wagner.indexOf(myUserId) !== -1;
+        const onEzquerra = bw.teams && Array.isArray(bw.teams.Ezquerra) && bw.teams.Ezquerra.indexOf(myUserId) !== -1;
+        if (!onWagner && !onEzquerra) return false; // not a participant in this war - fall through to the normal sheet
+
+        const myTeamKey = onWagner ? "Wagner" : "Ezquerra";
+        const teamDisplayName = onWagner ? "Wagner Block" : "Ezquerra Block";
+        const teamClass = onWagner ? "blockwar-team-wagner" : "blockwar-team-ezquerra";
+
+        const myVote = bw.votes ? bw.votes[myUserId] : null;
+        // blockWarVotePending covers the gap between clicking and the vote actually landing in a
+        // fresh blockWar.votes fetch - once it does, clear the optimistic flag so a stale pending
+        // state can never outlive the real confirmation.
+        if (myVote && blockWarVotePending) blockWarVotePending = null;
+        const effectiveVote = myVote || blockWarVotePending;
+
+        // Teams are auto-assigned, not chosen - the image just confirms which block this viewer
+        // already belongs to; the actual choice (further below) is Attack vs Defend, never which
+        // side to fight for.
+        const teamImageUrl = BLOCKWAR_BASE_URL + "/" + encodeURIComponent(teamDisplayName + ".png");
+
+        let html = '<div class="blockwar-title">BLOCK WAR</div>' +
+            '<img class="blockwar-team-image" src="' + teamImageUrl + '" alt="' + teamDisplayName + '" />' +
+            '<div class="blockwar-team-name ' + teamClass + '">You are defending ' + teamDisplayName + '</div>';
+
+        if (bw.phase === "voting") {
+            if (effectiveVote) {
+                html += '<div class="blockwar-status-line">You chose to <strong>' + effectiveVote.toUpperCase() + '</strong>. Hang tight - the vote closes soon and the war plays out on stream.</div>';
+                document.getElementById("content").innerHTML = html;
+                return true;
+            }
+
+            const secondsLeft = bw.votingEndsAt ? Math.max(0, bw.votingEndsAt - Math.floor(Date.now() / 1000)) : 0;
+            html += '<div class="blockwar-countdown">VOTE NOW - ' + secondsLeft + 's left</div>' +
+                '<div class="blockwar-buttons">' +
+                '<button class="panel-shop-button" id="blockwar-attack-btn">ATTACK</button>' +
+                '<button class="panel-shop-button" id="blockwar-defend-btn">DEFEND</button>' +
+                '</div>' +
+                '<div class="blockwar-status-line">Attack adds to ' + teamDisplayName + '\'s Attack score. Defend adds to its Defense score. One vote each - choose wisely.</div>';
+
+            document.getElementById("content").innerHTML = html;
+
+            function castVote(choice) {
+                const attackBtn = document.getElementById("blockwar-attack-btn");
+                const defendBtn = document.getElementById("blockwar-defend-btn");
+                if (attackBtn) attackBtn.disabled = true;
+                if (defendBtn) defendBtn.disabled = true;
+                blockWarVotePending = choice;
+                renderBlockWarTakeover(data, myUserId);
+                queueAction("blockWarVote", { choice: choice });
+            }
+
+            const attackBtn = document.getElementById("blockwar-attack-btn");
+            if (attackBtn) attackBtn.addEventListener("click", function () { castVote("attack"); });
+            const defendBtn = document.getElementById("blockwar-defend-btn");
+            if (defendBtn) defendBtn.addEventListener("click", function () { castVote("defense"); });
+
+            return true;
+        }
+
+        if (bw.phase === "combat") {
+            html += '<div class="blockwar-status-line">The battle is underway - watch the stream to see how ' + teamDisplayName + ' holds up!</div>';
+            document.getElementById("content").innerHTML = html;
+            return true;
+        }
+
+        if (bw.phase === "ended") {
+            let resultLine;
+            if (bw.winner === "brokenup") {
+                resultLine = "The Judges broke up the war before it was settled. Everyone involved lost 20 Kudos.";
+            } else if (bw.winner === myTeamKey) {
+                resultLine = teamDisplayName + " WON the Block War! Everyone on this block earned 50 Kudos.";
+            } else if (bw.winner) {
+                resultLine = teamDisplayName + " lost the Block War.";
+            } else {
+                resultLine = "The Block War has ended.";
+            }
+            html += '<div class="blockwar-status-line">' + resultLine + '</div>';
+            document.getElementById("content").innerHTML = html;
+            return true;
+        }
+
+        return false;
+    }
+
     function renderPerpSheet(data) {
         if (purchaseConfirmationMessage) {
             // Keeps whatever's already showing in the top-row (mugshot/isocube/etc) completely
@@ -1170,6 +1304,14 @@
         if (layLowConfirmationMessage) {
             document.getElementById("rest-of-content").innerHTML =
                 '<div class="juan-quote">' + layLowConfirmationMessage + '</div>';
+            return;
+        }
+
+        // Block War takes over the WHOLE panel (not just rest-of-content) for anyone assigned to
+        // a team - checked first, before any of the normal character-sheet rendering below, and
+        // returns early on a hit. renderBlockWarTakeover itself returns false (falls through to
+        // the normal sheet) for a non-participant or once blockWar.active is false.
+        if (data.blockWar && data.blockWar.active && renderBlockWarTakeover(data, data.userId)) {
             return;
         }
 
@@ -1222,6 +1364,13 @@
         if (hasFreshNotice && pickpocketPending) {
             pickpocketPending = false;
             pickpocketPendingTargetName = null;
+        }
+
+        // Same reasoning again for Graffiti - Crime - Graffiti Attempt's own notice (success,
+        // capped out, laying low, wrong size, whatever) is the only signal the client gets that
+        // the attempt actually resolved.
+        if (hasFreshNotice && graffitiPending) {
+            graffitiPending = false;
         }
 
         // Build the base skeleton (top-row + rest-of-content containers) if it doesn't exist yet -
@@ -1321,6 +1470,7 @@
             }
             pickpocketPending = false;
             pickpocketPendingTargetName = null;
+            graffitiPending = false;
         }
 
         // Resolves the shop-entry heat check (see shopEntryPending above). "shopReady" means the
@@ -1594,7 +1744,7 @@
         // perp-game ARREST-vs-DISTRACT race still shows their own portrait with the button
         // underneath, not a generic alert graphic).
         const perpPortraitYieldsToOtherScreen = stillJailed || robberyPending || pickpocketPending
-            || showFinderPage || shopEntryPending || showShopBrowser
+            || graffitiPending || showFinderPage || shopEntryPending || showShopBrowser
             || (overrideMode && overrideMode !== "arrestAlert" && overrideMode !== "distractAlert");
 
         if (isPlayingJudgeScreen) {
@@ -1842,6 +1992,19 @@
                 document.getElementById("top-row").innerHTML = topRowHtml;
                 lastKnownTopRowMode = pickpocketPendingKey;
             }
+        } else if (graffitiPending) {
+            // Same instant-feedback treatment as pickpocketPending above, using Tag icon.png in
+            // place of pickpocket-alert.png. No target/category to fingerprint the key on (a size
+            // pick is enough to know it's pending), so a single static key is enough here.
+            if (lastKnownTopRowMode !== "graffiti-pending") {
+                let topRowHtml = '<div class="stacked-panel">';
+                topRowHtml += '<div id="name-status-area"></div>';
+                topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/tag-icon.png" alt="Graffiti in progress"></div>';
+                topRowHtml += '</div>';
+
+                document.getElementById("top-row").innerHTML = topRowHtml;
+                lastKnownTopRowMode = "graffiti-pending";
+            }
         } else if (showFinderPage) {
             // Same juan-shop.png treatment as the shop browser - this is still a Juan's
             // Emporium interaction, just the search step of the finder flow specifically.
@@ -1967,6 +2130,8 @@
         } else if (robberyPending) {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
         } else if (pickpocketPending) {
+            nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
+        } else if (graffitiPending) {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + '</div>';
         } else if (showFinderPage) {
             nameStatusHtml = '<div class="name-row">' + escapeHtml(data.name) + ' makes a request...</div>';
@@ -2282,6 +2447,15 @@
             // any genuine server-driven override (oiWarning included) always wins over the
             // client-side placeholder, exactly like the top-row and name-status chains already do.
             html += '<div class="juan-quote">Working ' + escapeHtml(pickpocketPendingTargetName || "someone") + '\'s pockets...</div>';
+        } else if (graffitiPending) {
+            // Same idea as pickpocketPending above - Crime - Graffiti Attempt also resolves
+            // synchronously in one action (roll, judge spot-check, kudos, OBS effect kickoff all
+            // happen inline), so there's no separate cinematic override to wait for - just this
+            // placeholder until the real pickpocketNotice toast lands and clears it (see the
+            // hasFreshNotice check further up). Checked last in the chain for the same reason
+            // pickpocketPending is - any genuine server-driven override (an arrest alert catching
+            // the tagger mid-spray, say) must still win over this client-side placeholder.
+            html += '<div class="juan-quote">Spraying your tag...</div>';
         } else if (showFinderPage) {
             // Panel-driven replacement for !finditem - a text search field. Submitting queues
             // finderSearch, which triggers the same server-side Finders Fee System logic a chat
@@ -2622,6 +2796,22 @@
                 html += '<div class="items-text robbery-gun-note">Carrying a Gun raises your odds on a job, at the cost of a much higher chance of getting a Judge called on you if it goes wrong - and a Gun used on the job is guaranteed to be seized if you\'re arrested for it.</div>';
             }
             html += '<button class="panel-back-button" id="panel-robbery-cancel">&larr; Cancel</button>';
+        } else if (showGraffitiPicker) {
+            // Deliberately minimal compared to the Robbery picker - just 3 fixed size buttons, no
+            // Block-dependent availability fetch, no difficulty preview, no gun toggle. The actual
+            // result (success/fail, Kudos gained) comes back as the normal pickpocketNotice toast,
+            // same as Pickpocket, rather than a full-screen cinematic like Robbery gets.
+            html += '<div class="section-title">Pick a Tag Size</div>';
+            html += '<div class="items-text">Bigger tags are worth more Kudos, but are harder to pull off clean.</div>';
+            const GRAFFITI_SIZES = [
+                { key: "small", label: "Small" },
+                { key: "medium", label: "Medium" },
+                { key: "large", label: "Large" }
+            ];
+            GRAFFITI_SIZES.forEach(function (size, i) {
+                html += '<button class="panel-shop-button" id="graffiti-size-' + i + '" data-size="' + size.key + '">' + size.label + '</button>';
+            });
+            html += '<button class="panel-back-button" id="panel-graffiti-cancel">&larr; Cancel</button>';
         } else {
             html += '<div class="section-title">Skills</div>';
             const skillKeys = Object.keys(data.skills || {}).sort();
@@ -2659,6 +2849,12 @@
 
             html += '<div class="section-title">Mega-City One Creds</div>';
             html += '<div class="creds-text">' + (typeof data.points === "number" ? data.points.toLocaleString() : "0") + '</div>';
+
+            // Kudos - reputation earned from Robbery/Big Heist/Graffiti (deliberately NOT
+            // Pickpocket - see Crime - Graffiti Attempt for why), docked 2x on arrest. Shown right
+            // under Creds per the user's request ("near the top of the character sheet").
+            html += '<div class="section-title">Kudos</div>';
+            html += '<div class="creds-text">' + (typeof data.kudos === "number" ? data.kudos.toLocaleString() : "0") + '</div>';
 
             // "Heat" title line (now with the combined total on the right of that same line) + its
             // own underline (from .section-title's border-bottom) acts as the divider row, then
@@ -2719,6 +2915,7 @@
                 // this button section isn't even reachable while that's showing.
                 const pickpocketSettling = hasFreshNotice && lastCrimeAction === "pickpocket";
                 const robberySettling = hasFreshNotice && lastCrimeAction === "robbery";
+                const graffitiSettling = hasFreshNotice && lastCrimeAction === "graffiti";
                 html += '<button class="panel-shop-button" id="panel-pickpocket-button"' + (pickpocketSettling ? ' disabled' : '') + '>' +
                     (pickpocketSettling ? 'Pickpocket Someone (settling up...)' : 'Pickpocket Someone') + '</button>';
                 const robberyLeft = typeof data.robberyAttemptsRemaining === "number" ? data.robberyAttemptsRemaining : 999;
@@ -2728,6 +2925,13 @@
                 } else {
                     html += '<div class="panel-override-expiry">You\'ve pushed your luck enough for one stream - no robberies left tonight.</div>';
                 }
+                // Graffiti - 2-per-stream cap mirrors Robbery's, tracked server-side via
+                // GraffitiAttemptCounts (Crime - Graffiti Attempt rejects past the cap even if this
+                // somehow got clicked anyway) - no separate remaining-count field is surfaced yet,
+                // so this just always shows the button and lets the server-side rejection produce
+                // the normal toast if they're already out of attempts.
+                html += '<button class="panel-shop-button" id="panel-graffiti-button"' + (graffitiSettling ? ' disabled' : '') + '>' +
+                    (graffitiSettling ? 'Spray Some Graffiti (settling up...)' : 'Spray Some Graffiti') + '</button>';
                 html += '<button class="panel-shop-button" id="panel-trade-button">Trade</button>';
             }
             if (!stillJailed) {
@@ -2762,10 +2966,31 @@
             // ever nets cash (no physical item), so this always shows the same generic creds art
             // (robbery-bank.png - confirmed by user to be generic "creds" art, not a literal
             // bank), only set server-side on an actual successful theft.
-            var noticeImgHtml = data.pickpocketNotice.imageFile
-                ? '<img class="notice-inline-img" src="' + ROBBERY_BASE_URL + '/' + encodeURIComponent(data.pickpocketNotice.imageFile) + '" alt="Stolen creds">'
-                : '';
-            var noticeRowClass = data.pickpocketNotice.imageFile ? 'juan-quote notice-with-image' : 'juan-quote';
+            //
+            // showJudgeIcon/judgeName are a separate pair from imageFile (server-side never sets
+            // both at once) - used on the "a Judge might have noticed..." style fail notices.
+            // judgeName known -> that specific Judge's own portrait (same naming convention as
+            // the top-row Judge portraits elsewhere in this file: "<short name> Panel Image.png"
+            // at JUDGES_BASE_URL). judgeName not known (a watching-pool judge, or none at all
+            // registered) -> the generic judge-icon.png badge at UI_BASE_URL instead.
+            var noticeImgHtml;
+            var noticeHasImg;
+            if (data.pickpocketNotice.showJudgeIcon) {
+                if (data.pickpocketNotice.judgeName) {
+                    var noticeJudgeShortName = data.pickpocketNotice.judgeName.replace(/^Judge\s+/i, '');
+                    noticeImgHtml = '<img class="notice-inline-img" src="' + JUDGES_BASE_URL + '/' + encodeURIComponent(noticeJudgeShortName + ' Panel Image.png') + '" alt="' + escapeHtml(data.pickpocketNotice.judgeName) + '">';
+                } else {
+                    noticeImgHtml = '<img class="notice-inline-img" src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge">';
+                }
+                noticeHasImg = true;
+            } else if (data.pickpocketNotice.imageFile) {
+                noticeImgHtml = '<img class="notice-inline-img" src="' + ROBBERY_BASE_URL + '/' + encodeURIComponent(data.pickpocketNotice.imageFile) + '" alt="Stolen creds">';
+                noticeHasImg = true;
+            } else {
+                noticeImgHtml = '';
+                noticeHasImg = false;
+            }
+            var noticeRowClass = noticeHasImg ? 'juan-quote notice-with-image' : 'juan-quote';
             html = '<div class="' + noticeRowClass + '">' + noticeImgHtml + '<span>' + escapeHtml(data.pickpocketNotice.message) + '</span></div>' + html;
         }
 
@@ -2823,7 +3048,7 @@
                 // real "arrested twice" bug reported.
                 arrestButton.disabled = true;
                 const ov = data.panelOverride || {};
-                queueAction("confirmArrest", { perpId: ov.perpId || "", perpName: ov.perpName || "", severity: ov.severity || "minor" });
+                queueAction("confirmArrest", { perpId: ov.perpId || "", perpName: ov.perpName || "", severity: ov.severity || "minor", kudosPenalty: ov.kudosPenalty || 0 });
                 queueAction("clearOverride", {});
             });
         }
@@ -3206,6 +3431,14 @@
             });
         }
 
+        const graffitiButton = document.getElementById("panel-graffiti-button");
+        if (graffitiButton) {
+            graffitiButton.addEventListener("click", function () {
+                showGraffitiPicker = true;
+                if (lastFetchedData) renderPerpSheet(lastFetchedData);
+            });
+        }
+
         // ============================
         // TRADE - open button, accept/decline/cancel on a live tradeIncoming/tradeSent
         // override, and the full 3-step propose wizard (target -> offer -> request).
@@ -3411,6 +3644,32 @@
                         robberyPending = true;
                         robberyPendingCategory = cat;
                         lastCrimeAction = "robbery";
+                        if (lastFetchedData) renderPerpSheet(lastFetchedData);
+                    });
+                }
+            });
+        }
+
+        const graffitiCancel = document.getElementById("panel-graffiti-cancel");
+        if (graffitiCancel) {
+            graffitiCancel.addEventListener("click", function () {
+                showGraffitiPicker = false;
+                if (lastFetchedData) renderPerpSheet(lastFetchedData);
+            });
+        }
+
+        if (showGraffitiPicker) {
+            const GRAFFITI_SIZES_FOR_CLICK = ["small", "medium", "large"];
+            GRAFFITI_SIZES_FOR_CLICK.forEach(function (sizeKey, i) {
+                const row = document.getElementById("graffiti-size-" + i);
+                if (row) {
+                    row.addEventListener("click", function () {
+                        // Same double-click protection as robbery-category above.
+                        row.disabled = true;
+                        queueAction("graffitiAttempt", { size: sizeKey });
+                        showGraffitiPicker = false;
+                        lastCrimeAction = "graffiti";
+                        graffitiPending = true;
                         if (lastFetchedData) renderPerpSheet(lastFetchedData);
                     });
                 }
