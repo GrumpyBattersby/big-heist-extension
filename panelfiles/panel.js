@@ -616,7 +616,7 @@
 
         let html = '<div class="stream-advert">';
         html += '<div class="stream-advert-title">SECTOR 21 IS QUIET FOR NOW</div>';
-        html += '<div class="stream-advert-subtitle">The Big Heist is only active while the show is live. Here\'s when the Judges are back on duty:</div>';
+        html += '<div class="stream-advert-subtitle">The Big Heist is only active while the show is live. Here\'s when the Judges/perps are back in action:</div>';
 
         if (next) {
             const posterUrl = teamPosterImageUrl(next.team);
