@@ -2947,16 +2947,22 @@
                 // somehow got clicked anyway) - no separate remaining-count field is surfaced yet,
                 // so this just always shows the button and lets the server-side rejection produce
                 // the normal toast if they're already out of attempts.
-                html += '<button class="panel-shop-button" id="panel-graffiti-button"' + (graffitiSettling ? ' disabled' : '') + '>' +
-                    (graffitiSettling ? 'Spray Some Graffiti (settling up...)' : 'Spray Some Graffiti') + '</button>';
-                html += '<button class="panel-shop-button" id="panel-trade-button">Trade</button>';
+                if (featureOn(data, "graffiti")) {
+                    html += '<button class="panel-shop-button" id="panel-graffiti-button"' + (graffitiSettling ? ' disabled' : '') + '>' +
+                        (graffitiSettling ? 'Spray Some Graffiti (settling up...)' : 'Spray Some Graffiti') + '</button>';
+                }
+                if (featureOn(data, "trade")) {
+                    html += '<button class="panel-shop-button" id="panel-trade-button">Trade</button>';
+                }
             }
             if (!stillJailed) {
                 // Always available (not gated on owning an item, and not hidden while laying low
                 // itself - that's exactly where you'd go to turn it back off again). Burning an
                 // item for a bigger hit is a secondary option inside the same view, shown only if
                 // they actually own one.
-                html += '<button class="panel-shop-button" id="panel-laylow-button">Lay Low</button>';
+                if (featureOn(data, "layLow")) {
+                    html += '<button class="panel-shop-button" id="panel-laylow-button">Lay Low</button>';
+                }
 
                 // Assumption flagged: Big Heist participation is NOT blocked by laying low (only
                 // jail blocks it) - unlike Shop/Robbery/Pickpocket, joining a heist crew didn't
