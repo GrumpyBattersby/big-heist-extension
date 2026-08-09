@@ -214,7 +214,10 @@ let featureFlags = {
     robbery: true,
     pickpocket: true,
     bigHeist: true,
-    juansEmporium: true
+    juansEmporium: true,
+    graffiti: true,
+    trade: true,
+    layLow: true
 };
 
 app.post('/api/push-feature-flags', (req, res) => {
