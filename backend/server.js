@@ -192,6 +192,52 @@ app.post('/api/push-block-war', (req, res) => {
 });
 
 // ============================
+// FEATURE FLAGS - lets the streamer hold a panel feature back after it's already been coded and
+// deployed, then reveal it on stream whenever they're actually ready, instead of it just
+// appearing for every viewer the moment new panel code goes live. Same GLOBAL-state pattern as
+// blockWar/heistVote above (one shared set of flags, not per-viewer). Toggled from Streamer.bot
+// via "Big Heist - Toggle Feature" (one Stream Deck button per feature, each bound with its own
+// preset "feature" argument) - that action reads the CURRENT flags from the GET endpoint below
+// before flipping, so it can never drift out of sync with what's actually live here.
+//
+// Defaults reflect what's already been live for a while (itemGlossary, robbery, pickpocket,
+// bigHeist, juansEmporium - all default ON, preserving existing behavior) vs what's brand new
+// (achievements - defaults OFF until deliberately turned on). A missing/unknown key defaults to
+// OFF everywhere it's checked, both here and on the panel side, so a future feature added without
+// updating this default object still starts hidden rather than accidentally-on. Toggle any of
+// these off (e.g. at the start of a fresh season) to hold that crime/feature back until you're
+// ready to introduce it on stream, same mechanism either way.
+// ============================
+let featureFlags = {
+    itemGlossary: true,
+    achievements: false,
+    robbery: true,
+    pickpocket: true,
+    bigHeist: true,
+    juansEmporium: true
+};
+
+app.post('/api/push-feature-flags', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+    const { flags } = req.body;
+    if (flags && typeof flags === 'object') {
+        featureFlags = Object.assign({}, featureFlags, flags);
+    }
+    res.json({ success: true, featureFlags });
+});
+
+app.get('/api/feature-flags', (req, res) => {
+    // Public, no auth needed - same "display-only reference data" trust level as item-catalog.
+    // Also read by Big Heist - Toggle Feature itself, to fetch the current live value right
+    // before flipping it (rather than trusting a possibly-stale local copy).
+    res.set('Cache-Control', 'no-store');
+    res.json({ featureFlags });
+});
+
+// ============================
 // PUSH DATA - called by Streamer.bot whenever a perp's inventory or skills change
 // ============================
 app.post('/api/push-data', (req, res) => {
@@ -473,6 +519,7 @@ app.get('/api/my-data', (req, res) => {
             live: live,
             heistVote: heistVote,
             blockWar: blockWar,
+            featureFlags: featureFlags,
             message: "No perp data found yet - have you run !becomeperp on stream?"
         });
     }
@@ -482,6 +529,7 @@ app.get('/api/my-data', (req, res) => {
         live: live,
         heistVote: heistVote,
         blockWar: blockWar,
+        featureFlags: featureFlags,
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
