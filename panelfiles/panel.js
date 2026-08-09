@@ -368,6 +368,13 @@
                 return;
             }
 
+            // Show/hide the persistent bottom buttons (Item Glossary, Achievements, ...) per the
+            // streamer's current feature flags - applied here, before the live/found branches
+            // below, so it takes effect regardless of whether the show is live or the viewer's
+            // even a registered perp yet. See setupFeatureFlagButtons() for the missing-flag
+            // default (OFF) and Big Heist - Toggle Feature (Streamer.bot) for how these get set.
+            applyFeatureFlags(result.data.featureFlags);
+
             // Per user's request - the panel is only "active" (character sheet, robbery,
             // pickpocket, everything) while the show is actually live, OR a moderator has forced
             // it live via "!panellive on". Otherwise show the Sector 21 advert with the next
@@ -2882,26 +2889,31 @@
             // so this stays in sync with whatever that's currently showing.
             const isLayingLow = !!data.isLayingLow;
             const personalHeatForShopMsg = typeof data.personalHeat === "number" ? data.personalHeat : 0;
-            if (stillJailed) {
-                html += '<div class="panel-override-expiry">Can\'t do that from the cubes.</div>';
-            } else if (isLayingLow) {
-                html += personalHeatForShopMsg <= 0
-                    ? '<div class="panel-override-expiry">Heat\'s clear - hit Lay Low below to head back out and visit Juan\'s again.</div>'
-                    : '<div class="panel-override-expiry">You\'re laying low - being anywhere near Juan\'s is the last thing you want right now.</div>';
-            } else if (shopBanned) {
-                html += '<div class="panel-override-expiry">Juan doesn\'t want to see you right now. Try again later.</div>';
-                // Test-mode only: shows exactly how long is left on the current ban (regardless
-                // of which reason triggered it) and a way to bypass it entirely, since waiting
-                // out a real 1-20 minute cooldown isn't practical while actively testing.
-                if (data.isTestAccount) {
-                    const secondsLeft = effectiveBanUntil - nowSecondsForBan;
-                    const minsLeft = Math.floor(secondsLeft / 60);
-                    const secsLeft = secondsLeft % 60;
-                    html += '<div class="panel-override-expiry">[Test mode] ' + minsLeft + 'm ' + secsLeft + 's until Juan\'s reopens naturally.</div>';
-                    html += '<button class="panel-back-button" id="panel-force-open-button">[Test] Force Open Juan\'s</button>';
+            // Feature-flag gated (see applyFeatureFlags/featureOn) - when a feature's been turned
+            // off, its entry point disappears entirely rather than showing a disabled/greyed
+            // state, same "just isn't there" treatment as the Item Glossary/Achievements buttons.
+            if (featureOn(data, "juansEmporium")) {
+                if (stillJailed) {
+                    html += '<div class="panel-override-expiry">Can\'t do that from the cubes.</div>';
+                } else if (isLayingLow) {
+                    html += personalHeatForShopMsg <= 0
+                        ? '<div class="panel-override-expiry">Heat\'s clear - hit Lay Low below to head back out and visit Juan\'s again.</div>'
+                        : '<div class="panel-override-expiry">You\'re laying low - being anywhere near Juan\'s is the last thing you want right now.</div>';
+                } else if (shopBanned) {
+                    html += '<div class="panel-override-expiry">Juan doesn\'t want to see you right now. Try again later.</div>';
+                    // Test-mode only: shows exactly how long is left on the current ban (regardless
+                    // of which reason triggered it) and a way to bypass it entirely, since waiting
+                    // out a real 1-20 minute cooldown isn't practical while actively testing.
+                    if (data.isTestAccount) {
+                        const secondsLeft = effectiveBanUntil - nowSecondsForBan;
+                        const minsLeft = Math.floor(secondsLeft / 60);
+                        const secsLeft = secondsLeft % 60;
+                        html += '<div class="panel-override-expiry">[Test mode] ' + minsLeft + 'm ' + secsLeft + 's until Juan\'s reopens naturally.</div>';
+                        html += '<button class="panel-back-button" id="panel-force-open-button">[Test] Force Open Juan\'s</button>';
+                    }
+                } else {
+                    html += '<button class="panel-shop-button" id="panel-shop-button">Visit Juan\'s Emporium</button>';
                 }
-            } else {
-                html += '<button class="panel-shop-button" id="panel-shop-button">Visit Juan\'s Emporium</button>';
             }
             if (!stillJailed && !isLayingLow) {
                 // Per user's request (revised twice now): grey a Rob/Pickpocket button out while
@@ -2917,14 +2929,18 @@
                 const pickpocketSettling = hasFreshNotice && lastCrimeAction === "pickpocket";
                 const robberySettling = hasFreshNotice && lastCrimeAction === "robbery";
                 const graffitiSettling = hasFreshNotice && lastCrimeAction === "graffiti";
-                html += '<button class="panel-shop-button" id="panel-pickpocket-button"' + (pickpocketSettling ? ' disabled' : '') + '>' +
-                    (pickpocketSettling ? 'Pickpocket Someone (settling up...)' : 'Pickpocket Someone') + '</button>';
-                const robberyLeft = typeof data.robberyAttemptsRemaining === "number" ? data.robberyAttemptsRemaining : 999;
-                if (robberyLeft > 0) {
-                    html += '<button class="panel-shop-button" id="panel-robbery-button"' + (robberySettling ? ' disabled' : '') + '>' +
-                        (robberySettling ? 'Rob Somewhere (settling up...)' : 'Rob Somewhere') + '</button>';
-                } else {
-                    html += '<div class="panel-override-expiry">You\'ve pushed your luck enough for one stream - no robberies left tonight.</div>';
+                if (featureOn(data, "pickpocket")) {
+                    html += '<button class="panel-shop-button" id="panel-pickpocket-button"' + (pickpocketSettling ? ' disabled' : '') + '>' +
+                        (pickpocketSettling ? 'Pickpocket Someone (settling up...)' : 'Pickpocket Someone') + '</button>';
+                }
+                if (featureOn(data, "robbery")) {
+                    const robberyLeft = typeof data.robberyAttemptsRemaining === "number" ? data.robberyAttemptsRemaining : 999;
+                    if (robberyLeft > 0) {
+                        html += '<button class="panel-shop-button" id="panel-robbery-button"' + (robberySettling ? ' disabled' : '') + '>' +
+                            (robberySettling ? 'Rob Somewhere (settling up...)' : 'Rob Somewhere') + '</button>';
+                    } else {
+                        html += '<div class="panel-override-expiry">You\'ve pushed your luck enough for one stream - no robberies left tonight.</div>';
+                    }
                 }
                 // Graffiti - 2-per-stream cap mirrors Robbery's, tracked server-side via
                 // GraffitiAttemptCounts (Crime - Graffiti Attempt rejects past the cap even if this
@@ -2951,7 +2967,7 @@
                 // the countdown ran and finished it out (or nothing's been picked yet), there's
                 // nothing to click into, so showing a dead-end button here would just be
                 // confusing rather than useful.
-                if (data.bigHeist) {
+                if (data.bigHeist && featureOn(data, "bigHeist")) {
                     html += '<button class="panel-shop-button" id="panel-bigheist-button">The Big Heist</button>';
                 }
             }
@@ -3958,6 +3974,40 @@
     }
 
     // ============================
+    // FEATURE FLAGS - lets the streamer hold a panel feature back after it's already been coded
+    // and deployed, then reveal it on stream whenever they're ready, rather than it just appearing
+    // for every viewer the moment new panel code ships. Covers two different kinds of UI:
+    //
+    //   1. Persistent bottom buttons (Item Glossary, Achievements) - toggled via applyFeatureFlags
+    //      below, which directly shows/hides the actual DOM button. These live OUTSIDE #content
+    //      and survive every renderPerpSheet rebuild untouched, so they need their own dedicated
+    //      show/hide call (from fetchMyData, once per poll) rather than being re-evaluated as part
+    //      of the normal render.
+    //   2. Action entry points inside the character sheet itself (Rob Somewhere, Pickpocket
+    //      Someone, Visit Juan's Emporium, The Big Heist) - these get rebuilt from scratch on
+    //      every renderPerpSheet call, so they're gated inline with the featureOn(data, key) check
+    //      right where each button gets added to the HTML string, rather than a separate function.
+    //
+    // Both start/default to hidden if their flag is missing from the response entirely (network
+    // hiccup, a flag the backend doesn't know about yet, etc) - never assume a feature should be
+    // visible just because its flag wasn't found. In normal operation the flag is always present
+    // (see backend/server.js's featureFlags default object), so this only matters as a fail-safe.
+    // ============================
+    function applyFeatureFlags(flags) {
+        const f = flags || {};
+        const glossaryBtn = document.getElementById("glossary-open-button");
+        const achievementsBtn = document.getElementById("achievements-open-button");
+        if (glossaryBtn) glossaryBtn.style.display = f.itemGlossary ? "" : "none";
+        if (achievementsBtn) achievementsBtn.style.display = f.achievements ? "" : "none";
+    }
+
+    // Used inline inside renderPerpSheet for the action buttons that live inside the character
+    // sheet itself (Robbery/Pickpocket/Big Heist/Juan's) - see the block comment above.
+    function featureOn(data, key) {
+        return !!(data && data.featureFlags && data.featureFlags[key]);
+    }
+
+    // ============================
     // ACHIEVEMENT GALLERY - a full catalog of every achievement in the game (not just Block War),
     // so perps can browse everything there is to earn, a bit like the Item Glossary below. Purely
     // a client-side static list (unlike the item glossary there's no backend catalog endpoint for
@@ -3970,7 +4020,7 @@
     // under "Other Achievements", so nothing already earned ever goes missing from view.
     // ============================
     const ACHIEVEMENT_CATALOG = [
-        { key: "Rich", name: "Rich", desc: "Stack up 100,000 Kudos.", shadowed: false },
+        { key: "Rich", name: "Rich", desc: "Stack up 100,000 Creds.", shadowed: false },
         { key: "First Failure", name: "First Failure", desc: "Get busted on a job for the first time. Every legend has a rap sheet.", shadowed: false },
         { key: "Pickpocket Pro", name: "Pickpocket Pro", desc: "Land 10 successful pickpockets.", shadowed: false },
         { key: "Pickpocket Veteran", name: "Pickpocket Veteran", desc: "Land 100 successful pickpockets.", shadowed: false },
@@ -3982,6 +4032,10 @@
         { key: "Robber Veteran", name: "Robber Veteran", desc: "Pull off 100 successful robberies.", shadowed: false },
         { key: "Clean Getaway", name: "Clean Getaway", desc: "Escape a Big Heist without getting caught.", shadowed: false },
         { key: "Smooth Criminal", name: "Smooth Criminal", desc: "Complete 5 Big Heists, regardless of which ones.", shadowed: false },
+        { key: "Street Cred", name: "Street Cred", desc: "Reach 100 Kudos.", shadowed: false },
+        { key: "Known Face", name: "Known Face", desc: "Reach 500 Kudos.", shadowed: false },
+        { key: "Local Legend", name: "Local Legend", desc: "Reach 2,000 Kudos.", shadowed: false },
+        { key: "In the Red", name: "In the Red", desc: "Let your Kudos balance drop below zero.", shadowed: true },
         { key: "Enlisted", name: "Enlisted", desc: "Take part in your first Block War.", shadowed: false },
         { key: "First Blood", name: "First Blood", desc: "Win your first Block War.", shadowed: false },
         { key: "Block Captain", name: "Block Captain", desc: "Win 5 Block Wars.", shadowed: false },
