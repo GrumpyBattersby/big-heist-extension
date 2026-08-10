@@ -1934,7 +1934,18 @@
                     topRowHtml += '</div>';
                 } else if (overrideMode === "oiWarning") {
                     topRowHtml += '<div class="juan-frame item-info-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/pickpocket-alert.png" alt="Pickpocket in progress"></div>';
-                } else if (overrideMode === "heatDenied" || overrideMode === "offendedDenied") {
+                } else if (overrideMode === "heatDenied") {
+                    // "show" = local/citywide heat too high (Sector Chief Judge Stohl's domain) -
+                    // shows Stohl instead of the generic "shop closed" graphic, matching the OBS
+                    // Heat Overflow cinematic. "personal" heat denial keeps the plain closed-shop
+                    // image, since that's just Juan being cautious, not a Judge crackdown.
+                    const heatSourceForTopRow = (data.panelOverride && data.panelOverride.heatSource) || "personal";
+                    if (heatSourceForTopRow === "show") {
+                        topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + JUDGES_BASE_URL + '/' + encodeURIComponent("Stohl Mad.png") + '" alt="Judges are all over the area"></div>';
+                    } else {
+                        topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/juan-closed.png" alt="Turned away"></div>';
+                    }
+                } else if (overrideMode === "offendedDenied") {
                     topRowHtml += '<div class="juan-frame alert-frame-purple"><img src="' + UI_BASE_URL + '/juan-closed.png" alt="Turned away"></div>';
                 } else if (overrideMode === "robberyResult") {
                     // Location image stays up for the first part of the staged reveal, per user's
