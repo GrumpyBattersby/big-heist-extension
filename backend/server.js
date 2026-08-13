@@ -192,6 +192,44 @@ app.post('/api/push-block-war', (req, res) => {
 });
 
 // ============================
+// WALLY SQUAD INVESTIGATE VOTE - the pre-finale "accuse a crew member" round for the Wally Squad
+// social-deduction game. Same GLOBAL-state pattern as heistVote/blockWar above (one vote for the
+// whole crew, not per-viewer). Streamer.bot owns the source of truth (WallySquadVote global var)
+// and pushes its full current snapshot here on every change (round start, each vote, and the
+// resolution). Who Wally Squad actually IS is never part of this payload - Big Heist - Wally
+// Squad - Investigate Vote Tick only ever includes resolvedWinnerId/resolvedCorrect once the vote
+// has actually closed, and even then that's just whoever the CROWD landed on, not a separate
+// "here's the real answer" field - see that action's comments for the full reasoning.
+// ============================
+let wallySquadVote = {
+    active: false,
+    votingEndsAt: null,      // Unix seconds
+    candidates: [],            // [{ userId, userName }, ...] - current heist crew
+    votes: {},                   // voterUserId -> suspectUserId
+    resolvedWinnerId: null,
+    resolvedCorrect: null,
+    resolvedAt: null
+};
+
+app.post('/api/push-wally-squad-vote', (req, res) => {
+    const providedSecret = req.headers['x-push-secret'];
+    if (providedSecret !== PUSH_SECRET) {
+        return res.status(401).json({ error: 'Invalid push secret' });
+    }
+    const { active, votingEndsAt, candidates, votes, resolvedWinnerId, resolvedCorrect, resolvedAt } = req.body;
+    wallySquadVote = {
+        active: !!active,
+        votingEndsAt: votingEndsAt || null,
+        candidates: Array.isArray(candidates) ? candidates : [],
+        votes: (votes && typeof votes === 'object') ? votes : {},
+        resolvedWinnerId: resolvedWinnerId || null,
+        resolvedCorrect: typeof resolvedCorrect === 'boolean' ? resolvedCorrect : null,
+        resolvedAt: resolvedAt || null
+    };
+    res.json({ ok: true, wallySquadVote });
+});
+
+// ============================
 // FEATURE FLAGS - lets the streamer hold a panel feature back after it's already been coded and
 // deployed, then reveal it on stream whenever they're actually ready, instead of it just
 // appearing for every viewer the moment new panel code goes live. Same GLOBAL-state pattern as
@@ -217,7 +255,11 @@ let featureFlags = {
     juansEmporium: true,
     graffiti: true,
     trade: true,
-    layLow: true
+    layLow: true,
+    // Wally Squad (the Big Heist informant/social-deduction game) - defaults OFF, per the
+    // streamer's request, until there's a big enough crowd watching to make it worth running.
+    // Toggle via Big Heist - Toggle Feature same as every other flag here.
+    wallySquad: false
 };
 
 app.post('/api/push-feature-flags', (req, res) => {
@@ -523,6 +565,12 @@ app.get('/api/my-data', (req, res) => {
             heistVote: heistVote,
             blockWar: blockWar,
             featureFlags: featureFlags,
+            wallySquadVote: wallySquadVote,
+            // Added so full-panel global-state takeovers (anything that needs to key off "am I
+            // already accounted for") work for a viewer who hasn't run !becomeperp yet -
+            // resolveIdentity() above already resolves a real userId regardless of found/not-found,
+            // this just wasn't being surfaced in this branch before.
+            userId: identity.userId,
             message: "No perp data found yet - have you run !becomeperp on stream?"
         });
     }
@@ -533,6 +581,7 @@ app.get('/api/my-data', (req, res) => {
         heistVote: heistVote,
         blockWar: blockWar,
         featureFlags: featureFlags,
+        wallySquadVote: wallySquadVote,
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
