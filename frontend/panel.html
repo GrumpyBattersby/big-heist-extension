@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mega-City One Police Terminal</title>
+<script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&display=swap');
+
+    * { box-sizing: border-box; }
+
+    body {
+        margin: 0;
+        padding: 10px;
+        background: #0b1e2d;
+        color: #eaf6ff;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+    }
+
+    .terminal {
+        border: 4px solid #f5c518;
+        border-radius: 6px;
+        background: linear-gradient(180deg, #103049 0%, #0b2338 100%);
+        overflow: hidden;
+        position: relative;
+    }
+
+    .hazard-strip {
+        height: 10px;
+        background: repeating-linear-gradient(
+            45deg,
+            #f5c518, #f5c518 10px,
+            #1a1a1a 10px, #1a1a1a 20px
+        );
+    }
+
+    .header {
+        background: linear-gradient(180deg, #c0362c 0%, #8f241c 100%);
+        color: #fff2c9;
+        text-align: center;
+        padding: 8px 6px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border-bottom: 3px solid #f5c518;
+    }
+
+    .body-content {
+        padding: 10px 12px;
+    }
+
+    .top-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+    }
+
+    /* Used for the isocube and normal-mugshot views - name/status stacked ABOVE the image,
+       centered, rather than side-by-side (side-by-side was pushing name/status off-panel once
+       the isocube art needed to be wider than the old 70px mugshot). Left .top-row itself
+       unchanged (still a row) since the pending-pick-box (3 candidates) case doesn't use this
+       and shouldn't be affected. */
+    .stacked-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+    }
+    .stacked-panel #name-status-area {
+        text-align: center;
+        margin-bottom: 6px;
+    }
+
+    .mugshot-frame {
+        width: 120px;
+        height: 120px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+    .mugshot-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    /* Juan's Emporium images are landscape (roughly 1.44:1), unlike the square mugshot/isocube
+       frames, so this gets its own aspect-ratio-appropriate sizing rather than reusing those. */
+    .juan-frame {
+        width: 220px;
+        height: 153px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+    .juan-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .item-info-frame {
+        width: 160px;
+        height: 160px;
+    }
+    .item-info-frame img {
+        object-fit: contain;
+    }
+
+    .robbery-frame {
+        width: 200px;
+        height: 200px;
+    }
+
+    .judge-portrait-frame {
+        width: 220px;
+        height: 220px;
+    }
+    .judge-portrait-frame img {
+        object-fit: cover;
+    }
+    .judge-name-title {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 15px;
+        letter-spacing: 1px;
+        color: #f5c518;
+        text-align: center;
+        margin-top: 6px;
+    }
+    .status-judge-duty {
+        background: #1e4a63;
+        color: #7fd6ff;
+    }
+
+    .heist-banner-frame {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 400 / 180;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 8px;
+    }
+    .heist-banner-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .shop-instruction {
+        font-size: 12px;
+        color: #b8d8ec;
+        margin-bottom: 6px;
+    }
+    .shop-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+    .shop-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        border-bottom: 1px solid #1e4a63;
+        padding-bottom: 2px;
+    }
+    /* shop-row-clickable turns a shop-row into a real <button> for buying an item - resets all
+       the default button chrome first so it still looks exactly like the plain (non-clickable)
+       shop-row used elsewhere (item info stats, etc). */
+    button.shop-row {
+        width: 100%;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #1e4a63;
+        font-family: inherit;
+        cursor: pointer;
+        text-align: left;
+        padding: 4px 2px;
+        border-radius: 3px;
+    }
+    button.shop-row:hover {
+        background: rgba(245, 197, 24, 0.1);
+    }
+    /* Brief disabled state while a shop's background heat roll is still pending (client-side
+       instant open) - visually distinct from the normal clickable state so it's obvious nothing
+       can be bought yet, not just slower to respond. */
+    button.shop-row:disabled, .panel-shop-button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    button.shop-row:disabled:hover {
+        background: none;
+    }
+    .shop-item-name {
+        color: #eaf6ff;
+    }
+    .shop-item-price {
+        color: #7fd858;
+        font-weight: 700;
+    }
+    .shop-row-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .shop-buy-label {
+        background: #f5c518;
+        color: #1a1a1a;
+        font-size: 10px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 2px 8px;
+        border-radius: 3px;
+    }
+    .panel-back-button, .panel-shop-button {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        padding: 6px;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .panel-back-button:hover, .panel-shop-button:hover {
+        background: #ffd93d;
+    }
+
+    /* Small, auto-width buttons for the task list (JOIN/UNASSIGN/USE) - unlike every other
+       button in this panel, these sit inline next to text rather than spanning the full width. */
+    .panel-inline-button {
+        display: inline-block;
+        width: auto;
+        margin: 0;
+        padding: 3px 10px;
+        font-family: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .panel-inline-button:hover {
+        background: #ffd93d;
+    }
+    .panel-inline-button:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .task-block {
+        margin-bottom: 14px;
+        padding: 8px;
+        border: 1px solid #f5c518;
+        border-radius: 4px;
+    }
+    .task-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        color: #f5c518;
+        font-weight: 700;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid #f5c518;
+        padding-bottom: 4px;
+        margin-bottom: 6px;
+    }
+    /* Right-aligned task status icon in the header - tick/cross/dot showing at a glance whether
+       a task is fully covered, guaranteed to fail the heist, or incomplete-but-not-fatal. Hover
+       (native title attribute) explains what each state means. */
+    .task-status-icon {
+        flex-shrink: 0;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: help;
+        text-transform: none;
+        letter-spacing: normal;
+    }
+    .task-status-green { color: #4caf50; }
+    .task-status-amber { color: #ff9800; }
+    .task-status-red { color: #c0362c; }
+    .task-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: #b8d8ec;
+        margin-bottom: 4px;
+        gap: 8px;
+    }
+    .task-join-row {
+        text-align: center;
+        margin-top: 8px;
+    }
+    .item-reusable {
+        color: #4caf50;
+        font-weight: 700;
+    }
+    .item-single-use {
+        color: #f5c518;
+        font-weight: 700;
+    }
+    /* Robbery/task difficulty preview tags - seven-tier (Easy/Routine/50:50/Hard/Difficult/
+       Herculean/Near Impossible), consistent with the same wording used in the robbery result
+       cinematic, task assignment chat message, and the Big Heist finale. Colors ramp green ->
+       yellow -> red across the scale. */
+    .robbery-difficulty-tag {
+        display: inline-block;
+        margin-left: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+        vertical-align: middle;
+    }
+    .difficulty-easy {
+        background: #234d27;
+        color: #7ee08a;
+    }
+    .difficulty-routine {
+        background: #2b4d23;
+        color: #a3e08a;
+    }
+    .difficulty-5050 {
+        background: #4d4a12;
+        color: #f5e518;
+    }
+    .difficulty-hard {
+        background: #4d3b12;
+        color: #f5c518;
+    }
+    .difficulty-difficult {
+        background: #4d2e12;
+        color: #f59a18;
+    }
+    .difficulty-herculean {
+        background: #4d1f14;
+        color: #ff9a6a;
+    }
+    .difficulty-impossible {
+        background: #4d1414;
+        color: #ff8a8a;
+    }
+    .robbery-gun-note {
+        font-size: 12px;
+        opacity: 0.85;
+        margin-top: 6px;
+    }
+    /* Actual toggle-switch look for the robbery Gun on/off control - a pill track with a sliding
+       knob, standard "this is a binary switch" affordance, rather than a plain text button. */
+    .gun-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        margin-bottom: 4px;
+    }
+    .gun-toggle-label {
+        font-size: 13px;
+        font-weight: 700;
+    }
+    .gun-toggle-switch {
+        position: relative;
+        width: 44px;
+        height: 24px;
+        min-width: 44px;
+        border-radius: 12px;
+        border: none;
+        background: #5a1f1f;
+        cursor: pointer;
+        padding: 0;
+        transition: background 0.15s ease;
+    }
+    .gun-toggle-switch.on {
+        background: #2a6b3a;
+    }
+    .gun-toggle-knob {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform 0.15s ease;
+    }
+    .gun-toggle-switch.on .gun-toggle-knob {
+        transform: translateX(20px);
+    }
+    .gun-toggle-state {
+        font-size: 12px;
+        font-weight: 700;
+        opacity: 0.85;
+        min-width: 26px;
+    }
+    /* Sector 21 stream advert / countdown screen - shown instead of the character sheet whenever
+       the show isn't live (see renderStreamAdvert() in panel.js). */
+    .stream-advert {
+        text-align: center;
+        padding: 18px 12px;
+        color: #f0e6d2;
+    }
+    .stream-advert-title {
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        color: #ffcf4d;
+        margin-bottom: 8px;
+    }
+    .stream-advert-subtitle {
+        font-size: 13px;
+        opacity: 0.85;
+        margin-bottom: 16px;
+        line-height: 1.4;
+    }
+    .stream-advert-poster-frame {
+        margin: 0 auto 12px;
+        max-width: 320px;
+        border: 2px solid #b088f9;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 0 12px rgba(176, 136, 249, 0.35);
+    }
+    .stream-advert-poster-frame img {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+    .stream-advert-next-label {
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #b088f9;
+        margin-bottom: 6px;
+    }
+    .stream-advert-countdown {
+        font-size: 24px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        background: #2d1b4e;
+        border: 1px solid #b088f9;
+        border-radius: 8px;
+        padding: 10px 8px;
+        margin: 0 auto 8px;
+        max-width: 280px;
+        box-shadow: 0 0 12px rgba(176, 136, 249, 0.4);
+    }
+    .stream-advert-next-time {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-bottom: 20px;
+    }
+    .stream-advert-schedule {
+        border-top: 1px solid rgba(240, 230, 210, 0.25);
+        padding-top: 12px;
+        margin-bottom: 14px;
+    }
+    .stream-advert-schedule-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+        padding: 4px 4px;
+    }
+    .stream-advert-schedule-row:nth-child(odd) {
+        background: rgba(240, 230, 210, 0.05);
+        border-radius: 4px;
+    }
+    .stream-advert-schedule-team {
+        font-weight: 700;
+        opacity: 0.9;
+    }
+    .stream-advert-schedule-time {
+        opacity: 0.85;
+    }
+    .stream-advert-footer {
+        font-size: 11px;
+        opacity: 0.6;
+        font-style: italic;
+    }
+    /* Big Heist vote picker - 4 candidate cards with a live countdown (see
+       renderHeistVotePicker() in panel.js). */
+    .heist-vote-countdown {
+        text-align: center;
+        font-size: 14px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        color: #ffcf4d;
+        background: #2d1b4e;
+        border: 1px solid #b088f9;
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin: 10px 0 14px;
+    }
+    .heist-vote-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    .heist-vote-card {
+        border: 1px solid rgba(240, 230, 210, 0.3);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.2);
+        position: relative;
+    }
+    .heist-vote-card-mine {
+        border-color: #ffcf4d;
+        box-shadow: 0 0 10px rgba(255, 207, 77, 0.4);
+    }
+    .heist-vote-card-image {
+        width: 100%;
+        max-height: 120px;
+        overflow: hidden;
+        border-radius: 6px;
+        margin-bottom: 6px;
+    }
+    .heist-vote-card-image img {
+        width: 100%;
+        display: block;
+        object-fit: cover;
+    }
+    .heist-vote-votes {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: #b0202a;
+        color: #fff;
+        font-size: 11px;
+        font-weight: 800;
+        padding: 3px 7px;
+        border-radius: 12px;
+        letter-spacing: 0.5px;
+    }
+    .heist-vote-title {
+        font-size: 15px;
+        font-weight: 800;
+        color: #ffcf4d;
+        margin-bottom: 4px;
+    }
+    /* Heist vote candidate's difficulty badge - same 4-tier EASY/MEDIUM/HARD/NEAR IMPOSSIBLE
+       rating (and matching colors) as the OBS card's Stroke filter outline, so a viewer glancing
+       at the panel sees the same color language as the stream overlay. Separate from the existing
+       7-tier .difficulty-* classes above (those are Robbery's own scale, not this one). */
+    .heist-vote-difficulty {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-bottom: 6px;
+    }
+    .heist-difficulty-easy {
+        background: #234d27;
+        color: #4fc72e;
+    }
+    .heist-difficulty-medium {
+        background: #4d3b12;
+        color: #ff8c00;
+    }
+    .heist-difficulty-hard {
+        background: #4d1414;
+        color: #dc1414;
+    }
+    .heist-difficulty-near-impossible {
+        background: #4d1435;
+        color: #ff1493;
+    }
+    .heist-vote-desc {
+        font-size: 12px;
+        opacity: 0.85;
+        line-height: 1.4;
+        margin-bottom: 8px;
+    }
+    .heist-vote-stats {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        opacity: 0.85;
+        margin-bottom: 6px;
+    }
+    .heist-vote-stats strong {
+        color: #f0e6d2;
+    }
+    .heist-vote-items {
+        font-size: 11px;
+        opacity: 0.75;
+        margin-bottom: 6px;
+    }
+    .heist-vote-amount {
+        font-size: 13px;
+        font-weight: 700;
+        color: #7fd77f;
+        margin-bottom: 8px;
+    }
+    /* BLOCK WAR - full-panel takeover shown to anyone assigned to a team while a war is active
+       (see renderBlockWarTakeover in panel.js). Kept visually distinct (dark red/black) from the
+       heist-vote takeover above so the two are never mistaken for each other mid-stream. */
+    .blockwar-title {
+        font-size: 17px;
+        font-weight: 800;
+        color: #ff4d4d;
+        text-align: center;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+    }
+    /* Team art ("Wagner Block.png" / "Ezquerra Block.png") shown once a viewer's assigned to a
+       block - see BLOCKWAR_BASE_URL in panel.js. */
+    .blockwar-team-image {
+        display: block;
+        width: 100%;
+        max-width: 260px;
+        margin: 0 auto 10px;
+        border-radius: 6px;
+    }
+    .blockwar-team-name {
+        font-size: 14px;
+        font-weight: 800;
+        text-align: center;
+        margin-bottom: 10px;
+        padding: 4px 0;
+        border-radius: 4px;
+    }
+    .blockwar-team-wagner { color: #4fa8ff; background: #142a4d; }
+    .blockwar-team-ezquerra { color: #ff9d4d; background: #4d2e14; }
+    .blockwar-countdown {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.85;
+        margin-bottom: 12px;
+    }
+    .blockwar-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin-bottom: 10px;
+    }
+    .blockwar-buttons button {
+        flex: 1;
+        max-width: 130px;
+    }
+    .blockwar-status-line {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.9;
+        line-height: 1.5;
+    }
+    .heist-vote-button {
+        width: 100%;
+        padding: 8px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        border-radius: 6px;
+        border: 1px solid #b0202a;
+        background: #5a1f1f;
+        color: #f0e6d2;
+        cursor: pointer;
+    }
+    .heist-vote-button.voted {
+        background: #2a6b3a;
+        border-color: #4caf50;
+    }
+    .heist-vote-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+    /* WALLY SQUAD - two distinct panels (see renderWallySquadReveal and
+       renderWallySquadInvestigateVoteTakeover in panel.js). The private reveal (shown only to the
+       one secretly-assigned viewer) uses a dark green/black "inside job" theme, kept visually
+       distinct from Block War's dark red so it reads instantly as "yours alone". The crew-accuse
+       vote (shown to EVERY viewer just before the finale) reuses the same green theme so the two
+       feel like one connected feature, but leans on the vote-button treatment already established
+       by .heist-vote-button for consistency with the other accusation-style votes. */
+    .wally-title {
+        font-size: 17px;
+        font-weight: 800;
+        color: #6be07a;
+        text-align: center;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+    }
+    .wally-status-line {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.9;
+        line-height: 1.5;
+        margin-bottom: 10px;
+    }
+    .wally-section-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #7fd77f;
+        text-align: center;
+        margin: 10px 0 6px;
+    }
+    .wally-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+    .wally-action-button {
+        width: 100%;
+        padding: 8px;
+        font-weight: 700;
+        font-size: 12px;
+        border-radius: 6px;
+        border: 1px solid #2a6b3a;
+        background: #142d1a;
+        color: #f0e6d2;
+        cursor: pointer;
+    }
+    .wally-action-button:hover {
+        border-color: #6be07a;
+    }
+    .wally-action-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+    .wally-replace-button {
+        border-color: #4d3d14;
+        background: #2d2410;
+    }
+    .wally-dobin-button {
+        border-color: #b0202a;
+        background: #3d1414;
+    }
+    .wally-vote-title {
+        font-size: 17px;
+        font-weight: 800;
+        color: #6be07a;
+        text-align: center;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+    }
+    .wally-vote-status-line {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.9;
+        line-height: 1.5;
+        margin-bottom: 10px;
+    }
+    .wally-vote-countdown {
+        font-size: 13px;
+        text-align: center;
+        opacity: 0.85;
+        margin-bottom: 10px;
+        font-weight: 700;
+    }
+    .wally-vote-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .wally-vote-button {
+        width: 100%;
+        padding: 8px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        border-radius: 6px;
+        border: 1px solid #2a6b3a;
+        background: #142d1a;
+        color: #f0e6d2;
+        cursor: pointer;
+    }
+    .wally-vote-button:hover {
+        border-color: #6be07a;
+    }
+    .wally-vote-button:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+    /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
+       arrest alert) - makes it visually obvious something urgent just happened, distinct from
+       Juan's Emporium's yellow/navy theme used everywhere else. */
+    .alert-frame-purple {
+        background: #2d1b4e;
+        border-color: #b088f9;
+        box-shadow: 0 0 12px rgba(176, 136, 249, 0.6);
+    }
+    /* For full-content alert takeovers (bagman choice, move-item confirmation) - unlike
+       juan-frame (a fixed 220x153 image frame with overflow:hidden), this sizes to fit
+       whatever text and buttons are actually inside it, since those were getting cut off
+       by juan-frame's fixed height. */
+    .alert-takeover-box {
+        width: 100%;
+        height: auto;
+        box-sizing: border-box;
+        padding: 12px;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        background: #1a1a1a;
+    }
+    /* Judge arrest alert specifically keeps the purple background/glow for urgency, but the
+       border itself reverts to the standard yellow used everywhere else in the panel. */
+    .judge-alert-yellow-border {
+        border-color: #f5c518 !important;
+    }
+    /* Text input for the Finder search field and haggle offer field - the first place this
+       panel needs free-text entry rather than just buttons. */
+    .panel-text-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 8px;
+        padding: 8px;
+        font-family: inherit;
+        font-size: 13px;
+        color: #eaf6ff;
+        background: #0b2338;
+        border: 2px solid #1e4a63;
+        border-radius: 4px;
+    }
+    .panel-text-input:focus {
+        outline: none;
+        border-color: #f5c518;
+    }
+    .panel-text-input::placeholder {
+        color: #5a7a8f;
+    }
+    /* Dedicated style for the OI!/ARREST buttons, distinct from the plain Back/Shop buttons -
+       these are urgent, time-limited actions and should read as more attention-grabbing. */
+    .panel-urgent-button {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px;
+        font-family: inherit;
+        font-size: 16px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: 3px solid #ffd93d;
+        border-radius: 4px;
+        cursor: pointer;
+        animation: urgent-pulse 1s infinite;
+    }
+    .panel-urgent-button:hover {
+        background: #ffd93d;
+    }
+    @keyframes urgent-pulse {
+        0%, 100% { box-shadow: 0 0 4px rgba(245, 197, 24, 0.6); }
+        50% { box-shadow: 0 0 16px rgba(245, 197, 24, 1); }
+    }
+    .panel-override-expiry {
+        font-size: 10px;
+        font-style: italic;
+        color: #5a7a8f;
+        margin-top: 8px;
+    }
+    .juan-quote {
+        font-size: 11px;
+        font-style: italic;
+        color: #7fd6ff;
+        border-left: 2px solid #f5c518;
+        padding-left: 6px;
+        margin-top: 8px;
+    }
+    .notice-with-image {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .notice-inline-img {
+        width: 32px;
+        height: 32px;
+        object-fit: cover;
+        border-radius: 4px;
+        border: 2px solid #f5c518;
+        flex-shrink: 0;
+    }
+    .mugshot-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        color: #5a7a8f;
+        text-align: center;
+    }
+    .pending-pick-box {
+        text-align: center;
+        padding: 8px 4px;
+    }
+    .pending-pick-instruction {
+        font-size: 12px;
+        font-style: italic;
+        color: #f5c518;
+        margin-bottom: 8px;
+    }
+    .candidates-row {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+    }
+    .candidate-frame {
+        width: 70px;
+        text-align: center;
+    }
+    .candidate-frame img {
+        width: 70px;
+        height: 70px;
+        object-fit: cover;
+        border: 3px solid #f5c518;
+        border-radius: 4px;
+        display: block;
+    }
+    .candidate-number {
+        font-size: 11px;
+        font-weight: 700;
+        color: #7fd6ff;
+        margin-top: 4px;
+    }
+    .candidate-status {
+        width: 70px;
+        height: 70px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 10px;
+        font-style: italic;
+        color: #7fd6ff;
+        border: 3px dashed #f5c518;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+
+    /* isocube.png is now 758x793 (whitespace cropped out around the artwork) - overlay positions
+       below are re-measured directly from THIS image's actual pixel coordinates. If the artwork
+       is ever cropped/re-exported again, these will need re-measuring once more. */
+    .isocube-frame {
+        width: 200px;
+        height: 200px;
+        position: relative;
+        flex-shrink: 0;
+    }
+    .isocube-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+    .isocube-name {
+        position: absolute;
+        left: 39%;
+        top: 68%;
+        width: 44%;
+        height: 18%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #ffffff;
+        font-size: 14px;
+        line-height: 1;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        pointer-events: none;
+        transform: translateX(5px) translateY(-4px) rotate(-5deg);
+    }
+    .isocube-digit {
+        position: absolute;
+        top: 53%;
+        width: 5%;
+        height: 9%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
+        color: #f5c518;
+        text-shadow: 0 0 3px rgba(245, 197, 24, 0.6);
+        font-size: 11px;
+        pointer-events: none;
+    }
+    .isocube-digit-hours { left: 60%; }
+    .isocube-digit-minutes { left: 68%; }
+    .isocube-digit-seconds { left: 76%; }
+
+    .name-row {
+        font-size: 16px;
+        font-weight: 700;
+        color: #f5c518;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+    .status-citizen { background: #f5c518; color: #1a1a1a; }
+    .status-wanted { background: #c0362c; color: #fff; }
+    .status-isocube { background: #4a4a52; color: #eaf6ff; }
+
+    .flavor-text {
+        display: inline-block;
+        font-size: 13px;
+        font-weight: 700;
+        font-style: italic;
+        color: #f5c518;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+    }
+
+    .section-title {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 1px;
+        color: #7fd6ff;
+        border-bottom: 2px solid #1e4a63;
+        margin-top: 10px;
+        margin-bottom: 5px;
+        padding-bottom: 3px;
+    }
+
+    .skills-text, .items-text {
+        font-size: 12px;
+        line-height: 1.6;
+        color: #dceeff;
+    }
+
+    .skill-name { color: #eaf6ff; }
+    .skill-num { color: #7fd858; font-weight: 700; }
+
+    .last-crime-box {
+        background: #0b2338;
+        border: 1px solid #1e4a63;
+        border-radius: 4px;
+        padding: 6px 8px;
+        font-size: 12px;
+        font-style: italic;
+        color: #b8d8ec;
+        margin-top: 4px;
+    }
+
+    .creds-text {
+        font-size: 16px;
+        font-weight: 700;
+        color: #f5c518;
+    }
+
+    .heat-split-row {
+        display: flex;
+        gap: 16px;
+        margin-top: 6px;
+    }
+
+    .heat-split-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+
+    .heat-inline-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 16px;
+        font-weight: 700;
+        color: #f5c518;
+        margin-top: 4px;
+    }
+
+    .heat-title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+    }
+
+    .heat-split-item .section-title {
+        margin-top: 0;
+    }
+
+    .achievements-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .achievement-badge {
+        background: #1e4a63;
+        border: 2px solid #f5c518;
+        border-radius: 4px;
+        padding: 4px 10px;
+        display: inline-flex;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: #f5c518;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    #status-message {
+        color: #a0c4d8;
+        font-style: italic;
+        padding: 16px 10px;
+        text-align: center;
+    }
+
+    button {
+        background: #c0362c;
+        color: #fff2c9;
+        border: 2px solid #f5c518;
+        padding: 8px 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: 'Oswald', sans-serif;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 12px;
+    }
+    button:hover { background: #8f241c; }
+
+    /* Personal escape kit - shown in the running-heist view under the getaway art. */
+    .escape-kit-note {
+        font-size: 11px;
+        font-style: italic;
+        color: #b8d8ec;
+        margin-bottom: 6px;
+    }
+    .escape-kit-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .escape-kit-item {
+        flex: 1 1 88px;
+        max-width: 120px;
+        background: #0b2338;
+        border: 1px solid #1e4a63;
+        border-radius: 4px;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    .escape-kit-img {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        border-radius: 3px;
+        border: 1px solid #1e4a63;
+        margin-bottom: 4px;
+    }
+    .escape-kit-name {
+        font-size: 11px;
+        font-weight: 700;
+        color: #eaf6ff;
+        line-height: 1.2;
+    }
+    .escape-kit-bonus {
+        font-size: 13px;
+        font-weight: 700;
+        color: #7fd858;
+        margin-top: 2px;
+    }
+    .escape-kit-total {
+        font-size: 12px;
+        color: #dceeff;
+        margin-top: 6px;
+    }
+    .escape-kit-total span {
+        color: #7fd858;
+        font-weight: 700;
+    }
+
+    /* ============================
+       ITEM GLOSSARY - persistent bottom button (lives outside #content so it survives every
+       render branch in panel.js untouched) and the full-panel overlay it toggles.
+       ============================ */
+    .glossary-open-button {
+        display: block;
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px;
+        background: #1a3a52;
+        color: #f5c518;
+        border: 2px solid #f5c518;
+        border-radius: 4px;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        cursor: pointer;
+    }
+    .glossary-open-button:hover {
+        background: #24506f;
+    }
+
+    /* Small persistent Privacy/Terms links, same "outside #content" placement as the glossary
+       button above - Twitch review expects a viewer to be able to actually reach these from
+       inside the extension, not just have the URLs filed in the developer console. */
+    .legal-footer {
+        text-align: center;
+        margin-top: 6px;
+        font-size: 10px;
+        letter-spacing: 0.5px;
+    }
+    .legal-footer a {
+        color: #7fa8c4;
+        text-decoration: none;
+    }
+    .legal-footer a:hover {
+        text-decoration: underline;
+    }
+    .legal-footer span {
+        color: #3a5a72;
+        margin: 0 5px;
+    }
+
+    #glossary-overlay {
+        display: none;
+        padding: 10px;
+        max-height: 520px;
+        overflow-y: auto;
+    }
+    #glossary-overlay.glossary-visible {
+        display: block;
+    }
+    .terminal.glossary-active #content {
+        display: none;
+    }
+
+    .glossary-search {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+        background: #0b2338;
+        color: #eaf6ff;
+        border: 1px solid #f5c518;
+        border-radius: 4px;
+        font-family: 'Oswald', 'Segoe UI', Arial, sans-serif;
+    }
+
+    .glossary-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 10px;
+        margin-bottom: 8px;
+        background: #0e2c42;
+        border: 1px solid #2a5a7a;
+        border-radius: 4px;
+    }
+    .glossary-item-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+    }
+    .glossary-item-img-frame {
+        width: 130px;
+        height: 130px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0b1e2d;
+        border: 1px solid #2a5a7a;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .glossary-item-img-frame img {
+        max-width: 100%;
+        max-height: 100%;
+    }
+    .glossary-item-body {
+        width: 100%;
+    }
+    .glossary-item-name {
+        font-weight: 700;
+        color: #f5c518;
+        text-align: center;
+    }
+    .glossary-item-type {
+        font-size: 12px;
+        color: #9fc8e0;
+        text-align: center;
+    }
+    .glossary-item-desc {
+        font-size: 13px;
+        line-height: 1.35;
+        margin-bottom: 4px;
+    }
+    .glossary-item-cost {
+        font-size: 12px;
+        color: #f5c518;
+        margin-bottom: 2px;
+    }
+    .glossary-item-where {
+        font-size: 12px;
+        color: #7fd858;
+    }
+
+    /* ============================
+       ACHIEVEMENTS GALLERY - same "outside #content, own overlay" pattern as the Item Glossary
+       above. A handful of achievements are "shadowed" (achievement-mystery) - name/description
+       withheld and shown as "???" until unlocked, so a few stay a surprise.
+       ============================ */
+    #achievements-overlay {
+        display: none;
+        padding: 10px;
+        max-height: 520px;
+        overflow-y: auto;
+    }
+    #achievements-overlay.achievements-visible {
+        display: block;
+    }
+    .terminal.achievements-active #content {
+        display: none;
+    }
+
+    .achievement-card {
+        padding: 10px;
+        margin-bottom: 8px;
+        background: #0e2c42;
+        border: 1px solid #2a5a7a;
+        border-radius: 4px;
+    }
+    .achievement-card-name {
+        font-weight: 700;
+        color: #f5c518;
+    }
+    .achievement-card-desc {
+        font-size: 13px;
+        line-height: 1.35;
+        margin-top: 4px;
+        color: #dceeff;
+    }
+    .achievement-card-status {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-top: 6px;
+    }
+    .achievement-locked {
+        opacity: 0.55;
+    }
+    .achievement-locked .achievement-card-status {
+        color: #7fa8c4;
+    }
+    .achievement-unlocked {
+        border-color: #f5c518;
+    }
+    .achievement-unlocked .achievement-card-status {
+        color: #7fd858;
+    }
+    .achievement-mystery .achievement-card-name {
+        color: #9fc8e0;
+        letter-spacing: 2px;
+    }
+</style>
+</head>
+<body>
+
+<div class="terminal">
+    <div class="hazard-strip"></div>
+    <div class="header">Mega-City One Police Terminal</div>
+    <div class="body-content" id="content">
+        <div id="status-message">Loading...</div>
+    </div>
+    <div id="glossary-overlay"></div>
+    <button class="glossary-open-button" id="glossary-open-button" type="button" style="display:none;">Item Glossary</button>
+    <div id="achievements-overlay"></div>
+    <button class="glossary-open-button" id="achievements-open-button" type="button" style="display:none;">Achievements</button>
+    <div class="legal-footer">
+        <a href="https://grumpybattersby.github.io/big-heist-extension/privacy.html" target="_blank" rel="noopener">Privacy Notice</a>
+        <span>&middot;</span>
+        <a href="https://grumpybattersby.github.io/big-heist-extension/terms.html" target="_blank" rel="noopener">Terms of Service</a>
+    </div>
+    <div class="hazard-strip"></div>
+</div>
+
+<script src="panel.js"></script>
+
+</body>
+</html>
