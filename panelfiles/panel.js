@@ -2272,13 +2272,32 @@
             if (robberyCinematicStage >= 3) {
                 lines.push(perpName + ' ' + (succeeded ? 'succeeds' : 'fails') + '! "' + (succeeded ? 'Never in doubt.' : 'Oof, this is gonna hurt - are there any Judges around?') + '"');
             }
-            if (robberyCinematicStage >= 4) {
-                lines.push(escapeHtml(rd.resultLine || ''));
-            }
-
             lines.forEach(function (line) {
                 html += '<div class="juan-quote">' + line + '</div>';
             });
+
+            if (robberyCinematicStage >= 4) {
+                // Judge-portrait-on-arrest treatment (added 2026-08-13) - same showJudgeIcon/
+                // judgeName pair and "<short name> Panel Image.png" naming convention as
+                // pickpocketNotice's inline judge icon elsewhere in this file. judgeName known ->
+                // that specific Judge's own portrait; showJudgeIcon true with judgeName null ->
+                // the generic judge-icon.png badge (a watching-pool judge, or the perp-game race,
+                // where there's no single fixed identity); showJudgeIcon false -> no image at all
+                // (a clean, unnoticed success). Rendered as its own line here rather than folded
+                // into the lines.forEach() above, since only this last beat ever needs an image.
+                if (rd.showJudgeIcon) {
+                    var robberyJudgeImgHtml;
+                    if (rd.judgeName) {
+                        var robberyJudgeShortName = rd.judgeName.replace(/^Judge\s+/i, '');
+                        robberyJudgeImgHtml = '<img class="notice-inline-img" src="' + JUDGES_BASE_URL + '/' + encodeURIComponent(robberyJudgeShortName + ' Panel Image.png') + '" alt="' + escapeHtml(rd.judgeName) + '">';
+                    } else {
+                        robberyJudgeImgHtml = '<img class="notice-inline-img" src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge">';
+                    }
+                    html += '<div class="juan-quote notice-with-image">' + robberyJudgeImgHtml + '<span>' + escapeHtml(rd.resultLine || '') + '</span></div>';
+                } else {
+                    html += '<div class="juan-quote">' + escapeHtml(rd.resultLine || '') + '</div>';
+                }
+            }
 
             if (robberyCinematicStage >= 4) {
                 html += '<button class="panel-back-button" id="panel-robbery-result-back">&larr; Back</button>';
