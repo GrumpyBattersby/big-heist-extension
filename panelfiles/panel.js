@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-07-26-task-status-icons");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-13-wally-squad");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -183,6 +183,17 @@
     // confirms it via blockWar.votes), cleared once fresh data actually shows this userId as
     // having voted (or once the war itself is no longer active, in case something goes wrong).
     let blockWarVotePending = null; // null | 'attack' | 'defense'
+
+    // Wally Squad's own private state, remembered client-side across polls (their panelOverride
+    // payload only carries a fresh taskKey/slot right at the moment an action just landed - see
+    // Big Heist - Wally Squad - Join Task / - Replace Item's re-push - so this bridges the gap on
+    // every OTHER poll in between).
+    let wallySquadJoinedTaskKey = null; // null | taskKey, once their one covert join lands
+    let wallySquadDobInPending = null; // null | targetUserId, optimistic guard on the one-shot dob-in button
+
+    // Optimistic guard for the Investigate Vote accuse buttons - same pattern as
+    // blockWarVotePending above.
+    let wallySquadVotePending = null; // null | suspectUserId
 
     // Twitch Extensions can't run on YouTube at all - the standalone build (panel-standalone.html,
     // same panel.js) is served without the twitch-ext.min.js helper script, so `Twitch` simply
@@ -388,6 +399,16 @@
             }
             clearStreamAdvertInterval();
             maybeStartKeepalive();
+
+            // Wally Squad's crew-accuse vote takes over the WHOLE panel for EVERY viewer while a
+            // vote is active - checked before the found/not-found branch below (unlike Block War,
+            // which only takes over inside renderPerpSheet for found:true participants) so it also
+            // works for a viewer who's never run !becomeperp - anyone watching should be able to
+            // vote. renderWallySquadInvestigateVoteTakeover itself returns false once the vote is
+            // no longer active, falling through to the normal flow below.
+            if (renderWallySquadInvestigateVoteTakeover(result.data, result.data.userId)) {
+                return;
+            }
 
             if (!result.data.found) {
                 // Twitch Extension viewers have already granted Identity Link just to see this
@@ -1291,6 +1312,140 @@
         return false;
     }
 
+    // ============================
+    // WALLY SQUAD - private reveal, only ever reaches the ONE viewer Big Heist - Wally Squad -
+    // Assign secretly picked (delivered via the normal per-user panelOverride mechanism, mode
+    // "wallySquadReveal" - nobody else's panel ever receives this). Uses the SAME live task list
+    // (data.bigHeist.tasks) the normal Big Heist crew view already renders from, so there's no
+    // separate data source to keep in sync. Three pieces, all optional/independent:
+    //   1. Infiltrate a task (one-shot) - hidden once wallySquadJoinedTaskKey is known.
+    //   2. Replace an already-placed item with a dud - available on any task, any number of times
+    //      (the backend action itself silently no-ops if that slot has nothing real placed yet).
+    //   3. Dob someone in - only appears once panelOverride.dobInAvailable is true (set after a
+    //      successful Wally Squad bagman run - see the override in Big Heist - Getaway Success).
+    // ============================
+    function renderWallySquadReveal(data) {
+        const ov = data.panelOverride || {};
+        if (ov.sabotagedTask) wallySquadJoinedTaskKey = ov.sabotagedTask;
+
+        const bh = data.bigHeist;
+        const tasks = (bh && Array.isArray(bh.tasks)) ? bh.tasks : [];
+
+        let html = '<div class="wally-title">YOU ARE WALLY SQUAD</div>' +
+            '<div class="wally-status-line">Nobody else can see this screen. You\'re secretly trying to sink tonight\'s Big Heist from the inside - infiltrate a task, or quietly swap a placed item for a dud. If the crew accuses you correctly before the finale, it all gets undone and you lose 10% Kudos + Creds. Stay hidden and you bank a reward instead.</div>';
+
+        if (ov.dobInAvailable) {
+            const dobInCrew = Array.isArray(ov.dobInCrew) ? ov.dobInCrew : [];
+            html += '<div class="wally-section-title">You got away clean with the loot. One last move - dob someone in to the Judges?</div><div class="wally-buttons">';
+            dobInCrew.forEach(function (member) {
+                const disabled = wallySquadDobInPending ? ' disabled' : '';
+                html += '<button class="wally-action-button wally-dobin-button" data-dobin-target="' + escapeHtml(member.userId) +
+                    '" data-dobin-platform="' + escapeHtml(member.platform || "twitch") + '"' + disabled + '>Dob in ' + escapeHtml(member.userName) + '</button>';
+            });
+            html += '</div>';
+        }
+
+        if (tasks.length === 0) {
+            html += '<div class="wally-status-line">No active heist tasks right now.</div>';
+            document.getElementById("content").innerHTML = html;
+            return;
+        }
+
+        if (!wallySquadJoinedTaskKey) {
+            html += '<div class="wally-section-title">Infiltrate a task (one shot):</div><div class="wally-buttons">';
+            tasks.forEach(function (task) {
+                html += '<button class="wally-action-button" data-wally-join="' + escapeHtml(task.taskKey) + '">' + escapeHtml(task.taskName || task.taskKey) + '</button>';
+            });
+            html += '</div>';
+        } else {
+            html += '<div class="wally-status-line">Infiltrated: <strong>' + escapeHtml(wallySquadJoinedTaskKey) + '</strong> - that task always goes your way, no matter the roll.</div>';
+        }
+
+        html += '<div class="wally-section-title">Replace a placed item with a dud (only works if something real is already there):</div><div class="wally-buttons">';
+        tasks.forEach(function (task) {
+            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="required">Required item - ' + escapeHtml(task.taskName || task.taskKey) + '</button>';
+            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="bonus">Bonus item - ' + escapeHtml(task.taskName || task.taskKey) + '</button>';
+        });
+        html += '</div>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll("[data-wally-join]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const taskKey = btn.getAttribute("data-wally-join");
+                document.querySelectorAll("[data-wally-join]").forEach(function (b) { b.disabled = true; });
+                wallySquadJoinedTaskKey = taskKey; // optimistic
+                queueAction("wallySquadJoinTask", { taskKey: taskKey });
+            });
+        });
+        document.querySelectorAll(".wally-replace-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                btn.disabled = true;
+                queueAction("wallySquadReplaceItem", {
+                    taskKey: btn.getAttribute("data-wally-replace-task"),
+                    slotType: btn.getAttribute("data-wally-replace-slot")
+                });
+            });
+        });
+        document.querySelectorAll(".wally-dobin-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const targetUserId = btn.getAttribute("data-dobin-target");
+                const targetPlatform = btn.getAttribute("data-dobin-platform");
+                document.querySelectorAll(".wally-dobin-button").forEach(function (b) { b.disabled = true; });
+                wallySquadDobInPending = targetUserId;
+                queueAction("wallySquadDobIn", { targetUserId: targetUserId, targetPlatform: targetPlatform });
+            });
+        });
+    }
+
+    // ============================
+    // WALLY SQUAD INVESTIGATE VOTE - full-panel takeover shown to EVERY viewer (whole-audience,
+    // not gated to crew like Block War) while a pre-finale accusation round is open. See Big
+    // Heist - Wally Squad - Investigate Vote
+    // Start/Cast/Tick. Candidates are whoever was in the heist crew at the moment the round
+    // started (data.wallySquadVote.candidates), which includes Wally Squad themselves if they
+    // covertly joined a task - they look like any other crew member in this list.
+    // ============================
+    function renderWallySquadInvestigateVoteTakeover(data, myUserId) {
+        const wv = data.wallySquadVote;
+        if (!wv || !wv.active) return false;
+
+        const myVote = wv.votes ? wv.votes[myUserId] : null;
+        if (myVote && wallySquadVotePending) wallySquadVotePending = null;
+        const effectiveVote = myVote || wallySquadVotePending;
+
+        let html = '<div class="wally-vote-title">WHO IS WALLY SQUAD?</div>' +
+            '<div class="wally-vote-status-line">One of tonight\'s crew is secretly working against the job. Accuse someone before the vote closes - a majority on the right person undoes their sabotage.</div>';
+
+        if (effectiveVote) {
+            const accused = (wv.candidates || []).find(function (c) { return c.userId === effectiveVote; });
+            html += '<div class="wally-vote-status-line">You accused <strong>' + escapeHtml(accused ? accused.userName : effectiveVote) + '</strong>. Hang tight - the vote closes soon.</div>';
+            document.getElementById("content").innerHTML = html;
+            return true;
+        }
+
+        const secondsLeft = wv.votingEndsAt ? Math.max(0, wv.votingEndsAt - Math.floor(Date.now() / 1000)) : 0;
+        html += '<div class="wally-vote-countdown">VOTE NOW - ' + secondsLeft + 's left</div><div class="wally-vote-buttons">';
+        (wv.candidates || []).forEach(function (c) {
+            html += '<button class="wally-vote-button" data-suspect="' + escapeHtml(c.userId) + '">' + escapeHtml(c.userName) + '</button>';
+        });
+        html += '</div>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".wally-vote-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const suspectUserId = btn.getAttribute("data-suspect");
+                document.querySelectorAll(".wally-vote-button").forEach(function (b) { b.disabled = true; });
+                wallySquadVotePending = suspectUserId;
+                renderWallySquadInvestigateVoteTakeover(data, myUserId);
+                queueAction("wallySquadInvestigateVote", { suspectUserId: suspectUserId });
+            });
+        });
+
+        return true;
+    }
+
     function renderPerpSheet(data) {
         if (purchaseConfirmationMessage) {
             // Keeps whatever's already showing in the top-row (mugshot/isocube/etc) completely
@@ -1427,6 +1582,16 @@
         const overrideMode = (data.panelOverride && data.panelOverride.mode
             && (!data.panelOverride.expiresAt || data.panelOverride.expiresAt > Math.floor(Date.now() / 1000)))
             ? data.panelOverride.mode : null;
+
+        // WALLY SQUAD's private reveal takes over the WHOLE panel, same early-return treatment as
+        // Block War above - completely separate from the rest of this function's normal
+        // character-sheet priority chain (top-row name/status area, findersFee/shop/etc) rather
+        // than threaded through it, since this is a one-person-only alert with its own dedicated
+        // buttons, not a variant of the normal sheet. See renderWallySquadReveal below.
+        if (overrideMode === "wallySquadReveal") {
+            renderWallySquadReveal(data);
+            return;
+        }
 
         // Detect a FRESH robbery result (fingerprinted by expiresAt, always newly generated per
         // attempt server-side) and kick off the staged cinematic reveal exactly once - a later
