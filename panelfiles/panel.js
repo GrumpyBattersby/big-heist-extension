@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-14-snitch-line-revote");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-reveal-copy2");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1345,8 +1345,10 @@
         const bh = data.bigHeist;
         const tasks = (bh && Array.isArray(bh.tasks)) ? bh.tasks : [];
 
-        let html = '<div class="wally-title">YOU ARE WALLY SQUAD</div>' +
-            '<div class="wally-status-line">Nobody else can see this screen. You\'re secretly trying to sink tonight\'s Big Heist from the inside - infiltrate a task, or quietly swap a placed item for a dud. If the crew accuses you correctly before the finale, it all gets undone and you lose 10% Kudos + Creds. Stay hidden and you bank a reward instead.</div>';
+        let html = '<img class="wally-badge" src="' + UI_BASE_URL + '/informant-badge.png" alt="Informant">' +
+            '<div class="wally-title">YOU ARE WALLY SQUAD</div>' +
+            '<div class="wally-status-line">Shuuush... Nobody else can see this screen. Today, you\'re secretly trying to sink tonight\'s Big Heist from the inside - infiltrate a task, or quietly swap a placed item for a dud. If the crew accuses you correctly before the finale, it all gets undone and you lose Kudos and a few Creds.</div>' +
+            '<div class="wally-status-line">But... stay hidden and you bank a Judge reward instead! Who wouldn\'t want the Judges owing you a favour? Even if you don\'t manage to break up the heist, you\'ll get a chance to snitch on one of the others - you\'re looking for the one with the highest Kudos, the Judges pay well for netting the worst of the perps.</div>';
 
         if (ov.dobInAvailable) {
             const dobInCrew = Array.isArray(ov.dobInCrew) ? ov.dobInCrew : [];
@@ -1360,7 +1362,8 @@
         }
 
         if (tasks.length === 0) {
-            html += '<div class="wally-status-line">No active heist tasks right now.</div>';
+            html += '<div class="wally-status-line">No active heist tasks right now. Keep an eye here to foil a Heist when it starts.</div>' +
+                '<div class="wally-status-line">Note, you can\'t do any illegal activities while being a Judge informant (for the period of this stream).</div>';
             document.getElementById("content").innerHTML = html;
             return;
         }
