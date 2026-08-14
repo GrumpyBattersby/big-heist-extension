@@ -192,41 +192,36 @@ app.post('/api/push-block-war', (req, res) => {
 });
 
 // ============================
-// WALLY SQUAD INVESTIGATE VOTE - the pre-finale "accuse a crew member" round for the Wally Squad
-// social-deduction game. Same GLOBAL-state pattern as heistVote/blockWar above (one vote for the
-// whole crew, not per-viewer). Streamer.bot owns the source of truth (WallySquadVote global var)
-// and pushes its full current snapshot here on every change (round start, each vote, and the
-// resolution). Who Wally Squad actually IS is never part of this payload - Big Heist - Wally
-// Squad - Investigate Vote Tick only ever includes resolvedWinnerId/resolvedCorrect once the vote
-// has actually closed, and even then that's just whoever the CROWD landed on, not a separate
-// "here's the real answer" field - see that action's comments for the full reasoning.
+// SNITCH LINE - the whole-audience "dob a crew member in" mechanism for the Wally Squad
+// social-deduction game. Same GLOBAL-state pattern as heistVote/blockWar above (one shared tally,
+// not per-viewer). Unlike the retired Investigate Vote (single 120s window, majority wins), this
+// is open for the WHOLE heist once Wally Squad is assigned - each viewer gets ONE accusation ever
+// for that heist, and the moment any one target's accusation count hits 5, Streamer.bot resolves
+// it immediately (see Big Heist - Wally Squad - Snitch Line - Cast) - there's no separate polling
+// Tick and no fixed close time here. resolvedTargets only ever records WHO the crowd's calls
+// landed on and whether that call was correct - who Wally Squad actually is never sits in this
+// payload while they're still uncaught.
 // ============================
-let wallySquadVote = {
+let snitchLine = {
     active: false,
-    votingEndsAt: null,      // Unix seconds
-    candidates: [],            // [{ userId, userName }, ...] - current heist crew
-    votes: {},                   // voterUserId -> suspectUserId
-    resolvedWinnerId: null,
-    resolvedCorrect: null,
-    resolvedAt: null
+    candidates: [],   // [{ userId, userName }, ...] - live heist crew, refreshed on every vote
+    votes: {},           // voterUserId -> accusedUserId (one per voter, locked in for the heist)
+    resolvedTargets: {}    // accusedUserId -> "caught" | "innocent", once they hit 5 accusations
 };
 
-app.post('/api/push-wally-squad-vote', (req, res) => {
+app.post('/api/push-snitch-line', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
     if (providedSecret !== PUSH_SECRET) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
-    const { active, votingEndsAt, candidates, votes, resolvedWinnerId, resolvedCorrect, resolvedAt } = req.body;
-    wallySquadVote = {
+    const { active, candidates, votes, resolvedTargets } = req.body;
+    snitchLine = {
         active: !!active,
-        votingEndsAt: votingEndsAt || null,
         candidates: Array.isArray(candidates) ? candidates : [],
         votes: (votes && typeof votes === 'object') ? votes : {},
-        resolvedWinnerId: resolvedWinnerId || null,
-        resolvedCorrect: typeof resolvedCorrect === 'boolean' ? resolvedCorrect : null,
-        resolvedAt: resolvedAt || null
+        resolvedTargets: (resolvedTargets && typeof resolvedTargets === 'object') ? resolvedTargets : {}
     };
-    res.json({ ok: true, wallySquadVote });
+    res.json({ ok: true, snitchLine });
 });
 
 // ============================
@@ -565,7 +560,7 @@ app.get('/api/my-data', (req, res) => {
             heistVote: heistVote,
             blockWar: blockWar,
             featureFlags: featureFlags,
-            wallySquadVote: wallySquadVote,
+            snitchLine: snitchLine,
             // Added so full-panel global-state takeovers (anything that needs to key off "am I
             // already accounted for") work for a viewer who hasn't run !becomeperp yet -
             // resolveIdentity() above already resolves a real userId regardless of found/not-found,
@@ -581,7 +576,7 @@ app.get('/api/my-data', (req, res) => {
         heistVote: heistVote,
         blockWar: blockWar,
         featureFlags: featureFlags,
-        wallySquadVote: wallySquadVote,
+        snitchLine: snitchLine,
         userId: identity.userId,
         name: perpData.name,
         points: perpData.points || 0,
