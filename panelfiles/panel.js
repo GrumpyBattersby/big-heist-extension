@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-13-wally-squad");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-14-snitch-line-revote");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -191,9 +191,10 @@
     let wallySquadJoinedTaskKey = null; // null | taskKey, once their one covert join lands
     let wallySquadDobInPending = null; // null | targetUserId, optimistic guard on the one-shot dob-in button
 
-    // Optimistic guard for the Investigate Vote accuse buttons - same pattern as
-    // blockWarVotePending above.
-    let wallySquadVotePending = null; // null | suspectUserId
+    // Optimistic guard for the Snitch Line accuse buttons - same pattern as blockWarVotePending
+    // above. Once cast, this is permanent for the heist (no revoting), so this only ever needs to
+    // bridge the gap between clicking and the next fresh snitchLine.votes fetch confirming it.
+    let snitchLineVotePending = null; // null | accusedUserId
 
     // Twitch Extensions can't run on YouTube at all - the standalone build (panel-standalone.html,
     // same panel.js) is served without the twitch-ext.min.js helper script, so `Twitch` simply
@@ -400,13 +401,26 @@
             clearStreamAdvertInterval();
             maybeStartKeepalive();
 
-            // Wally Squad's crew-accuse vote takes over the WHOLE panel for EVERY viewer while a
-            // vote is active - checked before the found/not-found branch below (unlike Block War,
-            // which only takes over inside renderPerpSheet for found:true participants) so it also
-            // works for a viewer who's never run !becomeperp - anyone watching should be able to
-            // vote. renderWallySquadInvestigateVoteTakeover itself returns false once the vote is
-            // no longer active, falling through to the normal flow below.
-            if (renderWallySquadInvestigateVoteTakeover(result.data, result.data.userId)) {
+            // Wally Squad's own PRIVATE reveal has to win over the Snitch Line's whole-audience
+            // takeover below, for Wally Squad specifically - otherwise, since the Snitch Line opens
+            // the instant they're assigned and stays open the whole heist, they'd never see their
+            // own "YOU ARE WALLY SQUAD" screen at all, it'd be permanently blocked by the Snitch
+            // Line screen every viewer (including them) gets shown first. Checked here, ahead of
+            // the Snitch Line takeover, rather than relying on renderPerpSheet's own overrideMode
+            // check further down - that check is only ever reached for found:true viewers AFTER the
+            // Snitch Line takeover has already returned false, which never happens while it's open.
+            if (result.data.panelOverride && result.data.panelOverride.mode === "wallySquadReveal") {
+                renderWallySquadReveal(result.data);
+                return;
+            }
+
+            // The Snitch Line takes over the WHOLE panel for EVERY viewer while it's open - checked
+            // before the found/not-found branch below (unlike Block War, which only takes over
+            // inside renderPerpSheet for found:true participants) so it also works for a viewer
+            // who's never run !becomeperp - anyone watching should be able to dob someone in.
+            // renderSnitchLineTakeover itself returns false once it's no longer active, falling
+            // through to the normal flow below.
+            if (renderSnitchLineTakeover(result.data, result.data.userId)) {
                 return;
             }
 
@@ -1399,35 +1413,54 @@
     }
 
     // ============================
-    // WALLY SQUAD INVESTIGATE VOTE - full-panel takeover shown to EVERY viewer (whole-audience,
-    // not gated to crew like Block War) while a pre-finale accusation round is open. See Big
-    // Heist - Wally Squad - Investigate Vote
-    // Start/Cast/Tick. Candidates are whoever was in the heist crew at the moment the round
-    // started (data.wallySquadVote.candidates), which includes Wally Squad themselves if they
-    // covertly joined a task - they look like any other crew member in this list.
+    // SNITCH LINE - full-panel takeover shown to EVERY viewer (whole-audience, not gated to crew
+    // like Block War) for the WHOLE heist once Wally Squad is assigned - not a fixed vote window
+    // like the retired Investigate Vote. See Big Heist - Wally Squad - Snitch Line - Cast for the
+    // real rules; this view only ever needs to handle the ORDINARY-perp case (one live pick, freely
+    // changeable) since Wally Squad's own multi-vote ability is only ever exercised by them, and
+    // they never see this screen at all - their private reveal (renderWallySquadReveal) wins first,
+    // checked in fetchMyData ahead of this takeover.
+    //
+    // You can change who you're accusing as many times as you like, right up until the person
+    // you're CURRENTLY accusing hits 5 accusations and gets resolved - at that point you're locked
+    // in for the rest of the heist (Cast rejects anything more from you). Candidates are the live
+    // heist crew (data.snitchLine.candidates, refreshed on every vote), minus anyone already
+    // resolved (data.snitchLine.resolvedTargets) - once a call's been made on someone, further
+    // accusations against them can't do anything, so they're dropped from the list entirely.
     // ============================
-    function renderWallySquadInvestigateVoteTakeover(data, myUserId) {
-        const wv = data.wallySquadVote;
-        if (!wv || !wv.active) return false;
+    function renderSnitchLineTakeover(data, myUserId) {
+        const sl = data.snitchLine;
+        if (!sl || !sl.active) return false;
 
-        const myVote = wv.votes ? wv.votes[myUserId] : null;
-        if (myVote && wallySquadVotePending) wallySquadVotePending = null;
-        const effectiveVote = myVote || wallySquadVotePending;
+        const myVoteList = sl.votes ? sl.votes[myUserId] : null;
+        const myVote = myVoteList && myVoteList.length > 0 ? myVoteList[0] : null;
+        if (myVote && snitchLineVotePending) snitchLineVotePending = null;
+        const effectiveVote = myVote || snitchLineVotePending;
 
-        let html = '<div class="wally-vote-title">WHO IS WALLY SQUAD?</div>' +
-            '<div class="wally-vote-status-line">One of tonight\'s crew is secretly working against the job. Accuse someone before the vote closes - a majority on the right person undoes their sabotage.</div>';
+        const resolvedTargets = sl.resolvedTargets || {};
 
-        if (effectiveVote) {
-            const accused = (wv.candidates || []).find(function (c) { return c.userId === effectiveVote; });
-            html += '<div class="wally-vote-status-line">You accused <strong>' + escapeHtml(accused ? accused.userName : effectiveVote) + '</strong>. Hang tight - the vote closes soon.</div>';
+        let html = '<div class="wally-vote-title">SNITCH LINE</div>' +
+            '<div class="wally-vote-status-line">Think someone in tonight\'s crew is Wally Squad, working against the job? Dob them in to the Judges. You can change your mind any time - but the moment your pick hits 5 accusations and a call is made, you\'re locked in for the rest of the heist.</div>';
+
+        if (effectiveVote && resolvedTargets[effectiveVote]) {
+            // Their pick already got resolved - they're locked in, no more voting for them.
+            const accused = (sl.candidates || []).find(function (c) { return c.userId === effectiveVote; });
+            html += '<div class="wally-vote-status-line">You called it on <strong>' + escapeHtml(accused ? accused.userName : effectiveVote) + '</strong> - the Judges have already acted on that. You\'re locked in for the rest of this heist.</div>';
             document.getElementById("content").innerHTML = html;
             return true;
         }
 
-        const secondsLeft = wv.votingEndsAt ? Math.max(0, wv.votingEndsAt - Math.floor(Date.now() / 1000)) : 0;
-        html += '<div class="wally-vote-countdown">VOTE NOW - ' + secondsLeft + 's left</div><div class="wally-vote-buttons">';
-        (wv.candidates || []).forEach(function (c) {
-            html += '<button class="wally-vote-button" data-suspect="' + escapeHtml(c.userId) + '">' + escapeHtml(c.userName) + '</button>';
+        const openCandidates = (sl.candidates || []).filter(function (c) { return !resolvedTargets[c.userId]; });
+
+        if (effectiveVote) {
+            const accused = openCandidates.find(function (c) { return c.userId === effectiveVote; });
+            html += '<div class="wally-vote-status-line">Currently accusing <strong>' + escapeHtml(accused ? accused.userName : effectiveVote) + '</strong>. Click a different name below to change your mind.</div>';
+        }
+
+        html += '<div class="wally-vote-buttons">';
+        openCandidates.forEach(function (c) {
+            const isCurrent = c.userId === effectiveVote;
+            html += '<button class="wally-vote-button' + (isCurrent ? ' wally-vote-button-current' : '') + '" data-suspect="' + escapeHtml(c.userId) + '"' + (isCurrent ? ' disabled' : '') + '>' + escapeHtml(c.userName) + (isCurrent ? ' (current)' : '') + '</button>';
         });
         html += '</div>';
 
@@ -1435,11 +1468,10 @@
 
         document.querySelectorAll(".wally-vote-button").forEach(function (btn) {
             btn.addEventListener("click", function () {
-                const suspectUserId = btn.getAttribute("data-suspect");
-                document.querySelectorAll(".wally-vote-button").forEach(function (b) { b.disabled = true; });
-                wallySquadVotePending = suspectUserId;
-                renderWallySquadInvestigateVoteTakeover(data, myUserId);
-                queueAction("wallySquadInvestigateVote", { suspectUserId: suspectUserId });
+                const targetUserId = btn.getAttribute("data-suspect");
+                snitchLineVotePending = targetUserId;
+                renderSnitchLineTakeover(data, myUserId);
+                queueAction("wallySquadSnitchLine", { targetUserId: targetUserId });
             });
         });
 
