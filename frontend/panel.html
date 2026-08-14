@@ -688,13 +688,15 @@
         opacity: 0.6;
         cursor: default;
     }
-    /* WALLY SQUAD - two distinct panels (see renderWallySquadReveal and
-       renderWallySquadInvestigateVoteTakeover in panel.js). The private reveal (shown only to the
-       one secretly-assigned viewer) uses a dark green/black "inside job" theme, kept visually
-       distinct from Block War's dark red so it reads instantly as "yours alone". The crew-accuse
-       vote (shown to EVERY viewer just before the finale) reuses the same green theme so the two
-       feel like one connected feature, but leans on the vote-button treatment already established
-       by .heist-vote-button for consistency with the other accusation-style votes. */
+    /* WALLY SQUAD - two distinct panels (see renderWallySquadReveal and renderSnitchLineTakeover
+       in panel.js). The private reveal (shown only to the one secretly-assigned viewer) uses a
+       dark green/black "inside job" theme, kept visually distinct from Block War's dark red so it
+       reads instantly as "yours alone". The Snitch Line (shown to EVERY viewer for the whole heist
+       once Wally Squad is assigned, not just before the finale) reuses the same green theme so the
+       two feel like one connected feature, but leans on the vote-button treatment already
+       established by .heist-vote-button for consistency with the other accusation-style votes.
+       .wally-vote-countdown is unused now that Snitch Line has no fixed close time - left in place
+       rather than pulled, in case a future timed variant of this wants it back. */
     .wally-title {
         font-size: 17px;
         font-weight: 800;
@@ -793,6 +795,13 @@
     .wally-vote-button:disabled {
         opacity: 0.6;
         cursor: default;
+    }
+    /* Marks the Snitch Line's currently-accused candidate (see renderSnitchLineTakeover) - it's
+       still disabled like any other :disabled button above, this just adds the gold border so
+       "who am I accusing right now" reads at a glance among the other still-clickable names. */
+    .wally-vote-button-current {
+        border-color: #e0c96a;
+        opacity: 1;
     }
     /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
        arrest alert) - makes it visually obvious something urgent just happened, distinct from
