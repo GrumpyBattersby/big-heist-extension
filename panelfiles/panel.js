@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-reveal-copy2");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-task-name-fix");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1371,17 +1371,37 @@
         if (!wallySquadJoinedTaskKey) {
             html += '<div class="wally-section-title">Infiltrate a task (one shot):</div><div class="wally-buttons">';
             tasks.forEach(function (task) {
-                html += '<button class="wally-action-button" data-wally-join="' + escapeHtml(task.taskKey) + '">' + escapeHtml(task.taskName || task.taskKey) + '</button>';
+                html += '<button class="wally-action-button" data-wally-join="' + escapeHtml(task.taskKey) + '">' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
             });
             html += '</div>';
         } else {
             html += '<div class="wally-status-line">Infiltrated: <strong>' + escapeHtml(wallySquadJoinedTaskKey) + '</strong> - that task always goes your way, no matter the roll.</div>';
         }
 
+        // Blend in - join a task exactly the way any ordinary perp would (same joinTask/
+        // unassignTask backend actions the normal crew panel uses), then quietly walk away from
+        // it. Unlike the one-shot Infiltrate above, this can be repeated on any task, any number
+        // of times - every time you leave a task you joined this way, its difficulty climbs and
+        // stacks, hidden until someone rolls it (or a later joiner's detection roll catches it
+        // and clears the stack). NOTE: this uses the same Unassign button/action as Infiltrate's
+        // task, so leaving a task you infiltrated instead of joined normally converts that
+        // guaranteed win into stacked sabotage instead - a real tradeoff, not a bug.
+        html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div><div class="wally-buttons">';
+        tasks.forEach(function (task) {
+            if (task.isMine) {
+                html += '<button class="wally-action-button wally-blend-button" data-wally-blend-leave="' + escapeHtml(task.taskKey) + '">Leave ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+            } else if (task.taskFull) {
+                html += '<button class="wally-action-button" disabled>' + escapeHtml(task.taskName || humanize(task.taskKey)) + ' (full)</button>';
+            } else {
+                html += '<button class="wally-action-button wally-blend-button" data-wally-blend-join="' + escapeHtml(task.taskKey) + '">Join ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+            }
+        });
+        html += '</div>';
+
         html += '<div class="wally-section-title">Replace a placed item with a dud (only works if something real is already there):</div><div class="wally-buttons">';
         tasks.forEach(function (task) {
-            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="required">Required item - ' + escapeHtml(task.taskName || task.taskKey) + '</button>';
-            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="bonus">Bonus item - ' + escapeHtml(task.taskName || task.taskKey) + '</button>';
+            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="required">Required item - ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="bonus">Bonus item - ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
         });
         html += '</div>';
 
@@ -1393,6 +1413,20 @@
                 document.querySelectorAll("[data-wally-join]").forEach(function (b) { b.disabled = true; });
                 wallySquadJoinedTaskKey = taskKey; // optimistic
                 queueAction("wallySquadJoinTask", { taskKey: taskKey });
+            });
+        });
+        document.querySelectorAll("[data-wally-blend-join]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const taskKey = btn.getAttribute("data-wally-blend-join");
+                btn.disabled = true;
+                queueAction("joinTask", { taskKey: taskKey });
+            });
+        });
+        document.querySelectorAll("[data-wally-blend-leave]").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const taskKey = btn.getAttribute("data-wally-blend-leave");
+                btn.disabled = true;
+                queueAction("unassignTask", { taskKey: taskKey });
             });
         });
         document.querySelectorAll(".wally-replace-button").forEach(function (btn) {
