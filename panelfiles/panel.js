@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-task-name-fix");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-unified-sabotage");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -188,7 +188,6 @@
     // payload only carries a fresh taskKey/slot right at the moment an action just landed - see
     // Big Heist - Wally Squad - Join Task / - Replace Item's re-push - so this bridges the gap on
     // every OTHER poll in between).
-    let wallySquadJoinedTaskKey = null; // null | taskKey, once their one covert join lands
     let wallySquadDobInPending = null; // null | targetUserId, optimistic guard on the one-shot dob-in button
 
     // Optimistic guard for the Snitch Line accuse buttons - same pattern as blockWarVotePending
@@ -1331,16 +1330,20 @@
     // Assign secretly picked (delivered via the normal per-user panelOverride mechanism, mode
     // "wallySquadReveal" - nobody else's panel ever receives this). Uses the SAME live task list
     // (data.bigHeist.tasks) the normal Big Heist crew view already renders from, so there's no
-    // separate data source to keep in sync. Three pieces, all optional/independent:
-    //   1. Infiltrate a task (one-shot) - hidden once wallySquadJoinedTaskKey is known.
+    // separate data source to keep in sync. Two pieces, both optional/independent:
+    //   1. Blend in - join/leave a task exactly like any ordinary perp (same joinTask/unassignTask
+    //      actions everyone uses). Every join stacks +20 hidden difficulty onto that task; staying
+    //      on it through to the roll auto-succeeds it, no roll, nobody the wiser; leaving early
+    //      forfeits the guarantee and leaves the stacked difficulty behind for real. Repeatable,
+    //      any task, any number of times - this IS the infiltrate mechanic now, there's no
+    //      separate one-shot covert join any more.
     //   2. Replace an already-placed item with a dud - available on any task, any number of times
     //      (the backend action itself silently no-ops if that slot has nothing real placed yet).
-    //   3. Dob someone in - only appears once panelOverride.dobInAvailable is true (set after a
-    //      successful Wally Squad bagman run - see the override in Big Heist - Getaway Success).
+    // Dob someone in appears separately, once panelOverride.dobInAvailable is true (set at the end
+    // of the heist, win or lose - see Big Heist - Getaway Success/Fail).
     // ============================
     function renderWallySquadReveal(data) {
         const ov = data.panelOverride || {};
-        if (ov.sabotagedTask) wallySquadJoinedTaskKey = ov.sabotagedTask;
 
         const bh = data.bigHeist;
         const tasks = (bh && Array.isArray(bh.tasks)) ? bh.tasks : [];
@@ -1368,35 +1371,28 @@
             return;
         }
 
-        if (!wallySquadJoinedTaskKey) {
-            html += '<div class="wally-section-title">Infiltrate a task (one shot):</div><div class="wally-buttons">';
+        // Blend in requires being in the crew first, same as any ordinary perp (Big Heist - Task
+        // Assignment rejects a join otherwise) - Wally Squad's covert Infiltrate/Replace tools
+        // above don't need this, but this one rides the real joinTask/unassignTask actions, so
+        // it's subject to the same crew-membership gate. Uses the same bh.isInCrew flag/button
+        // pattern as the normal crew panel's own "Join the Crew" prompt.
+        if (!bh.isInCrew) {
+            html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div>';
+            html += '<div class="wally-status-line">You need to join the crew first before you can pick a task this way.</div>';
+            html += '<div class="wally-buttons"><button class="wally-action-button" id="wally-blend-joincrew-button">Join the Crew</button></div>';
+        } else {
+            html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div><div class="wally-buttons">';
             tasks.forEach(function (task) {
-                html += '<button class="wally-action-button" data-wally-join="' + escapeHtml(task.taskKey) + '">' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+                if (task.isMine) {
+                    html += '<button class="wally-action-button wally-blend-button" data-wally-blend-leave="' + escapeHtml(task.taskKey) + '">Leave ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+                } else if (task.taskFull) {
+                    html += '<button class="wally-action-button" disabled>' + escapeHtml(task.taskName || humanize(task.taskKey)) + ' (full)</button>';
+                } else {
+                    html += '<button class="wally-action-button wally-blend-button" data-wally-blend-join="' + escapeHtml(task.taskKey) + '">Join ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+                }
             });
             html += '</div>';
-        } else {
-            html += '<div class="wally-status-line">Infiltrated: <strong>' + escapeHtml(wallySquadJoinedTaskKey) + '</strong> - that task always goes your way, no matter the roll.</div>';
         }
-
-        // Blend in - join a task exactly the way any ordinary perp would (same joinTask/
-        // unassignTask backend actions the normal crew panel uses), then quietly walk away from
-        // it. Unlike the one-shot Infiltrate above, this can be repeated on any task, any number
-        // of times - every time you leave a task you joined this way, its difficulty climbs and
-        // stacks, hidden until someone rolls it (or a later joiner's detection roll catches it
-        // and clears the stack). NOTE: this uses the same Unassign button/action as Infiltrate's
-        // task, so leaving a task you infiltrated instead of joined normally converts that
-        // guaranteed win into stacked sabotage instead - a real tradeoff, not a bug.
-        html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div><div class="wally-buttons">';
-        tasks.forEach(function (task) {
-            if (task.isMine) {
-                html += '<button class="wally-action-button wally-blend-button" data-wally-blend-leave="' + escapeHtml(task.taskKey) + '">Leave ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
-            } else if (task.taskFull) {
-                html += '<button class="wally-action-button" disabled>' + escapeHtml(task.taskName || humanize(task.taskKey)) + ' (full)</button>';
-            } else {
-                html += '<button class="wally-action-button wally-blend-button" data-wally-blend-join="' + escapeHtml(task.taskKey) + '">Join ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
-            }
-        });
-        html += '</div>';
 
         html += '<div class="wally-section-title">Replace a placed item with a dud (only works if something real is already there):</div><div class="wally-buttons">';
         tasks.forEach(function (task) {
@@ -1407,14 +1403,13 @@
 
         document.getElementById("content").innerHTML = html;
 
-        document.querySelectorAll("[data-wally-join]").forEach(function (btn) {
-            btn.addEventListener("click", function () {
-                const taskKey = btn.getAttribute("data-wally-join");
-                document.querySelectorAll("[data-wally-join]").forEach(function (b) { b.disabled = true; });
-                wallySquadJoinedTaskKey = taskKey; // optimistic
-                queueAction("wallySquadJoinTask", { taskKey: taskKey });
+        const wallyBlendJoinCrewButton = document.getElementById("wally-blend-joincrew-button");
+        if (wallyBlendJoinCrewButton) {
+            wallyBlendJoinCrewButton.addEventListener("click", function () {
+                wallyBlendJoinCrewButton.disabled = true;
+                queueAction("joinCrew", {});
             });
-        });
+        }
         document.querySelectorAll("[data-wally-blend-join]").forEach(function (btn) {
             btn.addEventListener("click", function () {
                 const taskKey = btn.getAttribute("data-wally-blend-join");
