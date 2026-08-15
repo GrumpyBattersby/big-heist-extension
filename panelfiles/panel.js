@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-difficulty-achievements");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-sabotage-title-icon");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1377,19 +1377,23 @@
         // it's subject to the same crew-membership gate. Uses the same bh.isInCrew flag/button
         // pattern as the normal crew panel's own "Join the Crew" prompt.
         if (!bh.isInCrew) {
-            html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div>';
+            html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly ☠️sabotage it (stacks each time):</div>';
             html += '<div class="wally-status-line">You need to join the crew first before you can pick a task this way.</div>';
             html += '<div class="wally-buttons"><button class="wally-action-button" id="wally-blend-joincrew-button">Join the Crew</button></div>';
         } else {
-            html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div><div class="wally-buttons">';
+            html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly ☠️sabotage it (stacks each time):</div><div class="wally-buttons">';
             tasks.forEach(function (task) {
-                // Dynamic difficulty (2026-08-15, per user request) - only Wally's own poll
-                // response ever carries wallyEffectiveDifficulty (see Big Heist - Sync To
-                // Extension), so this is naturally absent/null for everyone else's panel - base
-                // difficulty plus whatever Wally has personally stacked onto this task so far,
-                // live, not the static number the rest of the crew would see pre-roll.
-                const diffSuffix = (task.wallyEffectiveDifficulty !== undefined && task.wallyEffectiveDifficulty !== null)
-                    ? ' (Difficulty: ' + task.wallyEffectiveDifficulty + ')' : '';
+                // Sabotage stack indicator (2026-08-15, per user request - replaces the raw
+                // difficulty number originally shown here) - only Wally's own poll response ever
+                // carries wallyEffectiveDifficulty (see Big Heist - Sync To Extension), so this is
+                // naturally absent/null for everyone else's panel. Each +20 stacked onto a task
+                // (Big Heist - Task Assignment adds one +20 per Wally join) becomes one skull, so
+                // "how sabotaged is this task right now" reads at a glance without a number.
+                let diffSuffix = "";
+                if (task.wallyEffectiveDifficulty !== undefined && task.wallyEffectiveDifficulty !== null) {
+                    const stackCount = Math.max(0, Math.round((task.wallyEffectiveDifficulty - task.difficulty) / 20));
+                    if (stackCount > 0) diffSuffix = ' <span class="wally-sabotage-skulls">' + "☠️".repeat(stackCount) + '</span>';
+                }
                 if (task.isMine) {
                     html += '<button class="wally-action-button wally-blend-button" data-wally-blend-leave="' + escapeHtml(task.taskKey) + '">Leave ' + escapeHtml(task.taskName || humanize(task.taskKey)) + diffSuffix + '</button>';
                 } else if (task.taskFull) {
