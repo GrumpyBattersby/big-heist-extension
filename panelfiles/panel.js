@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-replace-gated");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-leave-crew");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1391,6 +1391,12 @@
                     html += '<button class="wally-action-button wally-blend-button" data-wally-blend-join="' + escapeHtml(task.taskKey) + '">Join ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
                 }
             });
+            // Same real quitCrew action the normal crew panel's own "Quit the Crew" button uses -
+            // drops any task they're currently on too (Big Heist - Quit Crew already handles that),
+            // so this also works as a quick way out of a task if they'd rather not use the specific
+            // task's Leave button above. Symmetric with the "Join the Crew" prompt shown when not
+            // yet in the crew.
+            html += '<button class="wally-action-button" id="wally-blend-quitcrew-button">Leave the Crew</button>';
             html += '</div>';
         }
 
@@ -1413,6 +1419,13 @@
             wallyBlendJoinCrewButton.addEventListener("click", function () {
                 wallyBlendJoinCrewButton.disabled = true;
                 queueAction("joinCrew", {});
+            });
+        }
+        const wallyBlendQuitCrewButton = document.getElementById("wally-blend-quitcrew-button");
+        if (wallyBlendQuitCrewButton) {
+            wallyBlendQuitCrewButton.addEventListener("click", function () {
+                wallyBlendQuitCrewButton.disabled = true;
+                queueAction("quitCrew", {});
             });
         }
         document.querySelectorAll("[data-wally-blend-join]").forEach(function (btn) {
