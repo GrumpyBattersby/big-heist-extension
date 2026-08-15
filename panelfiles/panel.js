@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-unified-sabotage");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-replace-gated");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1394,12 +1394,17 @@
             html += '</div>';
         }
 
-        html += '<div class="wally-section-title">Replace a placed item with a dud (only works if something real is already there):</div><div class="wally-buttons">';
-        tasks.forEach(function (task) {
-            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="required">Required item - ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
-            html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="bonus">Bonus item - ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
-        });
-        html += '</div>';
+        // Hidden until they've joined the crew (same bh.isInCrew gate as Blend In above) - showing
+        // a "replace item" option before they're even in the crew doesn't make narrative sense and
+        // was a real tell (the button existing at all when nothing about them looks like a perp yet).
+        if (bh.isInCrew) {
+            html += '<div class="wally-section-title">Replace a placed item with a dud (only works if something real is already there):</div><div class="wally-buttons">';
+            tasks.forEach(function (task) {
+                html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="required">Required item - ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+                html += '<button class="wally-action-button wally-replace-button" data-wally-replace-task="' + escapeHtml(task.taskKey) + '" data-wally-replace-slot="bonus">Bonus item - ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+            });
+            html += '</div>';
+        }
 
         document.getElementById("content").innerHTML = html;
 
