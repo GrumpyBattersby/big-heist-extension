@@ -697,10 +697,19 @@
        established by .heist-vote-button for consistency with the other accusation-style votes.
        .wally-vote-countdown is unused now that Snitch Line has no fixed close time - left in place
        rather than pulled, in case a future timed variant of this wants it back. */
+    .wally-badge {
+        display: block;
+        width: 128px;
+        height: 128px;
+        margin: 0 auto 8px;
+        border-radius: 8px;
+        border: 2px solid #F5C518;
+        box-shadow: 0 0 10px rgba(245, 197, 24, 0.5);
+    }
     .wally-title {
         font-size: 17px;
         font-weight: 800;
-        color: #6be07a;
+        color: #F5C518;
         text-align: center;
         letter-spacing: 1px;
         margin-bottom: 8px;
@@ -715,7 +724,7 @@
     .wally-section-title {
         font-size: 13px;
         font-weight: 700;
-        color: #7fd77f;
+        color: #F5C518;
         text-align: center;
         margin: 10px 0 6px;
     }
@@ -731,13 +740,13 @@
         font-weight: 700;
         font-size: 12px;
         border-radius: 6px;
-        border: 1px solid #2a6b3a;
+        border: 1px solid #8a6d14;
         background: #142d1a;
         color: #f0e6d2;
         cursor: pointer;
     }
     .wally-action-button:hover {
-        border-color: #6be07a;
+        border-color: #F5C518;
     }
     .wally-action-button:disabled {
         opacity: 0.6;
@@ -754,7 +763,7 @@
     .wally-vote-title {
         font-size: 17px;
         font-weight: 800;
-        color: #6be07a;
+        color: #F5C518;
         text-align: center;
         letter-spacing: 1px;
         margin-bottom: 8px;
@@ -784,13 +793,13 @@
         font-weight: 800;
         letter-spacing: 0.5px;
         border-radius: 6px;
-        border: 1px solid #2a6b3a;
+        border: 1px solid #8a6d14;
         background: #142d1a;
         color: #f0e6d2;
         cursor: pointer;
     }
     .wally-vote-button:hover {
-        border-color: #6be07a;
+        border-color: #F5C518;
     }
     .wally-vote-button:disabled {
         opacity: 0.6;
@@ -802,6 +811,13 @@
     .wally-vote-button-current {
         border-color: #e0c96a;
         opacity: 1;
+    }
+    /* Sabotage stack indicator on Blend In task buttons (see renderWallySquadReveal) - one skull
+       per +20 stacked onto that task. Sized down from the button's own font-size so it reads as a
+       small marker, not competing with the task name. */
+    .wally-sabotage-skulls {
+        font-size: 11px;
+        opacity: 0.9;
     }
     /* Purple alert background for time-sensitive panel takeovers (pickpocket Oi warning, Judge
        arrest alert) - makes it visually obvious something urgent just happened, distinct from
