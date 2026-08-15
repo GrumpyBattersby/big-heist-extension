@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-gold-theme");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-difficulty-achievements");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1383,12 +1383,19 @@
         } else {
             html += '<div class="wally-section-title">Blend in - join a task like any other perp, then leave to quietly sabotage it (stacks each time):</div><div class="wally-buttons">';
             tasks.forEach(function (task) {
+                // Dynamic difficulty (2026-08-15, per user request) - only Wally's own poll
+                // response ever carries wallyEffectiveDifficulty (see Big Heist - Sync To
+                // Extension), so this is naturally absent/null for everyone else's panel - base
+                // difficulty plus whatever Wally has personally stacked onto this task so far,
+                // live, not the static number the rest of the crew would see pre-roll.
+                const diffSuffix = (task.wallyEffectiveDifficulty !== undefined && task.wallyEffectiveDifficulty !== null)
+                    ? ' (Difficulty: ' + task.wallyEffectiveDifficulty + ')' : '';
                 if (task.isMine) {
-                    html += '<button class="wally-action-button wally-blend-button" data-wally-blend-leave="' + escapeHtml(task.taskKey) + '">Leave ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+                    html += '<button class="wally-action-button wally-blend-button" data-wally-blend-leave="' + escapeHtml(task.taskKey) + '">Leave ' + escapeHtml(task.taskName || humanize(task.taskKey)) + diffSuffix + '</button>';
                 } else if (task.taskFull) {
-                    html += '<button class="wally-action-button" disabled>' + escapeHtml(task.taskName || humanize(task.taskKey)) + ' (full)</button>';
+                    html += '<button class="wally-action-button" disabled>' + escapeHtml(task.taskName || humanize(task.taskKey)) + diffSuffix + ' (full)</button>';
                 } else {
-                    html += '<button class="wally-action-button wally-blend-button" data-wally-blend-join="' + escapeHtml(task.taskKey) + '">Join ' + escapeHtml(task.taskName || humanize(task.taskKey)) + '</button>';
+                    html += '<button class="wally-action-button wally-blend-button" data-wally-blend-join="' + escapeHtml(task.taskKey) + '">Join ' + escapeHtml(task.taskName || humanize(task.taskKey)) + diffSuffix + '</button>';
                 }
             });
             // Same real quitCrew action the normal crew panel's own "Quit the Crew" button uses -
@@ -4328,7 +4335,16 @@
         { key: "Coward's Way Out", name: "Coward's Way Out", desc: "Flee from a Block War by not voting before the panel timer runs out.", shadowed: true },
         { key: "Too Hot for the Judges", name: "Too Hot for the Judges", desc: "Be part of a Block War that gets broken up by the Judges before either side wins.", shadowed: true },
         { key: "Glutton for Punishment", name: "Glutton for Punishment", desc: "Lose 5 Block Wars.", shadowed: true },
-        { key: "Turncoat", name: "Turncoat", desc: "Fight for both Wagner Block and Ezquerra Block across different wars.", shadowed: true }
+        { key: "Turncoat", name: "Turncoat", desc: "Fight for both Wagner Block and Ezquerra Block across different wars.", shadowed: true },
+        // WALLY SQUAD (2026-08-15) - all four unlock silently (see Achievements - Unlock's
+        // "silent" argument), never announced in chat, so nobody's identity leaks mid-heist.
+        // Not shadowed - the Wally Squad mechanic itself is already public knowledge (the Snitch
+        // Line takeover tells the whole audience it's in play the moment someone's assigned), so
+        // naming these openly doesn't spoil anything about WHO currently holds the role.
+        { key: "Undercover", name: "Undercover", desc: "Get assigned as the Wally Squad for the first time.", shadowed: false },
+        { key: "Inside Job", name: "Inside Job", desc: "As Wally Squad, sabotage a task that goes on to actually fail - and sink the heist.", shadowed: false },
+        { key: "Ghost", name: "Ghost", desc: "See a Big Heist through to the end as Wally Squad without ever getting caught.", shadowed: false },
+        { key: "Backstabber", name: "Backstabber", desc: "Use Dob In to send a crewmate to the cubes on your way out as Wally Squad.", shadowed: false }
     ];
 
     function setupAchievementsGallery() {
