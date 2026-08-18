@@ -1108,6 +1108,32 @@
         }
     }
 
+    // Judge skill stats line, shown under the portrait on the Judge Home Screen (added 2026-08-18,
+    // per the user's request - "you have judge skills no? It's used in investigations and
+    // arrests?"). data.skills is already computed generically for every account by Sync To
+    // Extension (every "skill_<Name>" player var >0, no panel/backend change needed to expose it -
+    // it just wasn't being rendered anywhere on the Judge side, only on the plain Perp character
+    // sheet's Skills section). The two that actually apply to a Judge: Investigation ("Big Heist -
+    // Judge Investigation" - d100 + this vs the heist's investigation difficulty, +1-3 on a 25%
+    // chance on success, capped 50) and Capture ("Big Heist - Getaway Fail/Success" - lowers the
+    // shared getaway difficulty for the whole crew, +1-3 on a 40% chance on a successful collar,
+    // capped 30). Investigation defaults to a real starting value of 10 in the actual game logic
+    // (Judge Investigation explicitly treats an unset/0 skill as 10, since a never-set var and a
+    // genuine 0 aren't distinguishable) - mirrored here so a Judge who hasn't had an investigation
+    // resolve yet still sees their real starting number instead of a misleading blank/zero. Capture
+    // has no such floor in the actual game logic (a brand new Judge really does start at a bare 0
+    // there), so this shows exactly that.
+    function renderJudgeSkillsLine(data) {
+        const skills = data.skills || {};
+        const investigation = typeof skills.Investigation === "number" ? skills.Investigation : 10;
+        const capture = typeof skills.Capture === "number" ? skills.Capture : 0;
+        return '<div class="skills-text judge-skills-line">' +
+            '<span class="skill-name">Investigation:</span> <span class="skill-num">' + investigation + '</span>' +
+            ' &nbsp; ' +
+            '<span class="skill-name">Capture:</span> <span class="skill-num">' + capture + '</span>' +
+            '</div>';
+    }
+
     // M.A.C. Search results screen - a Judges-only full-panel takeover, shown after a Judge runs
     // a search from their Judge Home Screen (see the mac-search-input/mac-search-button wiring
     // further down). data.panelOverride.results is a flat array of {name, type} written by
@@ -1134,7 +1160,7 @@
         const results = ov.results || [];
 
         let html = '<div class="section-title">M.A.C. Search Results</div>';
-        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + ' for &ldquo;' + escapeHtml(ov.query || '') + '&rdquo;. Tap a result to flag it on the GM\'s Stream Deck - you can flag more than one, and you can flag the same one again later.</div>';
+        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + ' for &ldquo;' + escapeHtml(ov.query || '') + '&rdquo;. Tap a result to read it and flag it on the GM\'s Stream Deck - you can flag more than one, and you can read/flag the same one again later.</div>';
         html += '<div class="heist-vote-grid">';
 
         const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
@@ -1145,8 +1171,12 @@
             html += '<div class="heist-vote-card' + (isQueued ? ' heist-vote-card-mine' : '') + '">';
             html += '<div class="heist-vote-difficulty">' + (MAC_TYPE_LABELS[r.type] || String(r.type || '').toUpperCase()) + '</div>';
             html += '<div class="heist-vote-title">' + escapeHtml(r.name || '') + '</div>';
+            // Deliberately just name/type here, never the record's actual content - reading it
+            // (and seeing anything more than that) requires this explicit tap, one record at a
+            // time, per the user's spoiler-safety ask ("they'd need to know the actual name and
+            // pull it individually"). See renderMacRecordDetail below for what a tap reveals.
             html += '<button type="button" class="heist-vote-button mac-search-result-button' + (isQueued ? ' voted' : '') + '" data-mac-name="' + escapeHtml(r.name || '') + '" data-mac-type="' + escapeHtml(r.type || '') + '">' +
-                (isQueued ? 'QUEUED - TAP TO FLAG AGAIN' : 'FLAG FOR GM') + '</button>';
+                (isQueued ? 'QUEUED - TAP TO READ AGAIN' : 'READ + FLAG FOR GM') + '</button>';
             html += '</div>';
         });
 
@@ -1160,10 +1190,14 @@
                 const name = btn.getAttribute("data-mac-name");
                 const type = btn.getAttribute("data-mac-type");
                 macSearchQueuedKeys.add(type + "::" + name);
-                queueAction("macSearchResultPicked", { name: name, type: type });
+                // "macRecordRead" (added 2026-08-18) fetches the full record for THIS Judge's own
+                // panel (see renderMacRecordDetail) AND still flags it purple for the GM, same as
+                // the old "macSearchResultPicked" always did - one click does both now.
+                queueAction("macRecordRead", { name: name, type: type });
                 // Re-render immediately from the same data so the "QUEUED" state shows without
                 // waiting on the next poll - the same pattern the crime cross-reference and other
-                // instant-feedback screens in this file use.
+                // instant-feedback screens in this file use. The actual detail screen takes over
+                // once the next poll brings back the server's macRecordDetail override.
                 renderMacSearchResults(data);
             });
         });
@@ -1173,6 +1207,44 @@
             backButton.addEventListener("click", function () {
                 macSearchQueuedKeys = new Set();
                 queueAction("clearOverride", {});
+            });
+        }
+    }
+
+    // A Judge's own read-out of ONE search result's full record - only reachable by tapping a
+    // specific named result on the screen above, never shown in bulk (added 2026-08-18, per the
+    // user's explicit spoiler-safety ask: "they'd need to know the actual name and pull it
+    // individually"). Back returns to the search results list (via "macBackToSearchResults",
+    // restored server-side from a cached copy of the last search - see "M.A.C. - Back To Search
+    // Results"), not all the way out to the Judge Home Screen.
+    function renderMacRecordDetail(data) {
+        const ov = data.panelOverride || {};
+        const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
+
+        let html = '<div class="section-title">' + escapeHtml(ov.name || '') + '</div>';
+        html += '<div class="juan-quote">' + (MAC_TYPE_LABELS[ov.type] || String(ov.type || '').toUpperCase()) + ' - flagged for the GM.</div>';
+
+        if (ov.subHeading) {
+            html += '<div class="skills-text" style="white-space: pre-wrap; margin-bottom: 8px;">' + escapeHtml(ov.subHeading) + '</div>';
+        }
+        if (ov.details) {
+            html += '<div class="juan-quote" style="white-space: pre-wrap;">' + escapeHtml(ov.details) + '</div>';
+        }
+        if (ov.additionalInfo) {
+            html += '<div class="juan-quote" style="white-space: pre-wrap;">' + escapeHtml(ov.additionalInfo) + '</div>';
+        }
+        if (!ov.subHeading && !ov.details && !ov.additionalInfo) {
+            html += '<div class="juan-quote">M.A.C. has nothing else on file for this one.</div>';
+        }
+
+        html += '<button class="panel-back-button" id="panel-mac-record-detail-back-button">Back to Results</button>';
+
+        document.getElementById("content").innerHTML = html;
+
+        const backButton = document.getElementById("panel-mac-record-detail-back-button");
+        if (backButton) {
+            backButton.addEventListener("click", function () {
+                queueAction("macBackToSearchResults", {});
             });
         }
     }
@@ -1720,6 +1792,18 @@
             document.getElementById("content").innerHTML =
                 '<div class="top-row" id="top-row"></div><div id="rest-of-content"></div>';
             lastKnownTopRowMode = null;
+            // Also drop the rest-of-content freeze key (added 2026-08-18) - without this, a full
+            // panel takeover that replaces content.innerHTML wholesale (M.A.C. Search results,
+            // Wally Squad reveal, etc) leaves lastKnownContentKey holding whatever freeze key was
+            // computed BEFORE the takeover. Once the takeover ends and this skeleton gets rebuilt
+            // fresh and empty, the very next contentFreezeKey computed below can coincidentally
+            // match that stale value (nothing about the Judge Home Screen necessarily changed) and
+            // the freeze check short-circuits before rest-of-content is ever populated again -
+            // reported as "click Back after searching, goes back to the judge screen but the
+            // search box is gone." Forcing a null here guarantees the very next render always
+            // actually (re)populates rest-of-content instead of trusting a key that predates a
+            // full wipe.
+            lastKnownContentKey = null;
         }
 
         const isPending = !!data.pendingMugshotPick;
@@ -1776,6 +1860,14 @@
         // affected. See renderMacSearchResults below.
         if (overrideMode === "macSearchResults") {
             renderMacSearchResults(data);
+            return;
+        }
+
+        // A Judge's own read-out of ONE search result's full record (added 2026-08-18) - same
+        // early-return treatment as macSearchResults above, only ever reached by explicitly
+        // tapping a named result. See renderMacRecordDetail below.
+        if (overrideMode === "macRecordDetail") {
+            renderMacRecordDetail(data);
             return;
         }
 
@@ -2117,6 +2209,7 @@
                 topRowHtml += '<div id="name-status-area"></div>';
                 topRowHtml += '<div class="juan-frame judge-portrait-frame"><img src="' + JUDGES_BASE_URL + '/' + encodeURIComponent(judgeShortName + ' Panel Image.png') + '" alt="' + escapeHtml(data.assignedJudgeName) + '"></div>';
                 topRowHtml += '<div class="judge-name-title">' + escapeHtml(data.assignedJudgeName) + '</div>';
+                topRowHtml += renderJudgeSkillsLine(data);
                 topRowHtml += '</div>';
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
@@ -2142,6 +2235,7 @@
                     topRowHtml += '<div class="juan-frame judge-portrait-frame judge-alert-yellow-border"><img src="' + UI_BASE_URL + '/judge-icon.png" alt="Judge"></div>';
                     topRowHtml += '<div class="judge-name-title">JUDGE ' + escapeHtml(data.name).toUpperCase() + '</div>';
                 }
+                topRowHtml += renderJudgeSkillsLine(data);
                 topRowHtml += '</div>';
 
                 document.getElementById("top-row").innerHTML = topRowHtml;
@@ -2557,9 +2651,23 @@
         // screen would never actually render (the freeze returns before ever reaching the toast
         // code below), AND the search button - disabled the instant it was clicked - would stay
         // disabled forever, since nothing else was ever changing the key to allow a rebuild.
+        //
+        // The Judge Home Screen (added 2026-08-18, fixed same day) needs the exact same freeze -
+        // its new M.A.C. Search box is another text input, and without a freeze key this branch
+        // was rebuilding on every single poll (a plain Judge Home Screen has no other freeze
+        // condition covering it), which recreated the <input> from scratch each time and threw
+        // away whatever the Judge had typed plus their cursor focus - reported as "loses focus
+        // all the time and doesn't submit properly." Frozen while on the plain judge-home view
+        // (not mid-arrestAlert, which still needs to interrupt immediately), and - same reasoning
+        // as showFinderPage above - folds in pickpocketNotice's expiresAt so a fresh "no results"
+        // toast from a search can still break through and render.
+        const judgeHomeNoticeKey = (data.pickpocketNotice && data.pickpocketNotice.expiresAt) || 0;
         const contentFreezeKey = overrideMode === "findersFee"
             ? "findersFee-" + ((data.panelOverride && data.panelOverride.itemName) || "") + "-" + ((data.panelOverride && data.panelOverride.askingPrice) || 0)
-            : showFinderPage ? "finderPage-" + ((data.pickpocketNotice && data.pickpocketNotice.expiresAt) || 0) : null;
+            : showFinderPage ? "finderPage-" + ((data.pickpocketNotice && data.pickpocketNotice.expiresAt) || 0)
+            : (isPlayingJudgeScreen && overrideMode !== "arrestAlert") ? "judgeHome-playing-" + judgeHomeNoticeKey
+            : (isWatchingJudgeScreen && overrideMode !== "arrestAlert") ? "judgeHome-watching-" + judgeHomeNoticeKey
+            : null;
 
         if (contentFreezeKey && lastKnownContentKey === contentFreezeKey) {
             return;
@@ -3437,16 +3545,49 @@
         }
 
         const macSearchButton = document.getElementById("mac-search-button");
+        const macSearchInput = document.getElementById("mac-search-input");
+        let macSearchPressedTimeout = null;
+        const runMacSearch = function () {
+            const query = macSearchInput ? macSearchInput.value.trim() : "";
+            if (!query) return;
+            // Not disabled on click, unlike most other action buttons in this file - a Judge
+            // may want to fire off several searches in quick succession while investigating,
+            // and the search itself is cheap/idempotent server-side, so there's no real risk
+            // in leaving it live.
+            //
+            // Visual "depress" cue (added 2026-08-18) so it's obvious the click actually
+            // registered - the search box lives on the deliberately-frozen Judge Home Screen
+            // (see contentFreezeKey above), which means nothing else visibly changes the instant
+            // you click, and that silence read as "doesn't submit properly." Resets itself
+            // automatically the moment the freeze next breaks for real (a fresh notice rebuilds
+            // this button from scratch, or a successful search replaces the whole screen), or
+            // after 6s as a safety net if neither ever happens (e.g. a dropped queueAction).
+            if (macSearchButton) {
+                macSearchButton.classList.add("is-pressed");
+                macSearchButton.textContent = "Searching...";
+                if (macSearchPressedTimeout) clearTimeout(macSearchPressedTimeout);
+                macSearchPressedTimeout = setTimeout(function () {
+                    if (macSearchButton) {
+                        macSearchButton.classList.remove("is-pressed");
+                        macSearchButton.textContent = "Judge M.A.C. Search";
+                    }
+                }, 6000);
+            }
+            queueAction("macSearch", { query: query });
+        };
         if (macSearchButton) {
-            macSearchButton.addEventListener("click", function () {
-                const input = document.getElementById("mac-search-input");
-                const query = input ? input.value.trim() : "";
-                if (!query) return;
-                // Not disabled on click, unlike most other action buttons in this file - a Judge
-                // may want to fire off several searches in quick succession while investigating,
-                // and the search itself is cheap/idempotent server-side, so there's no real risk
-                // in leaving it live.
-                queueAction("macSearch", { query: query });
+            macSearchButton.addEventListener("click", runMacSearch);
+        }
+        if (macSearchInput) {
+            // Enter-to-search, same as any normal search box - without this, pressing Enter did
+            // nothing (no surrounding <form>, so there's no default submit behavior to rely on),
+            // which read as the box "not submitting properly" even though the click button itself
+            // always worked fine.
+            macSearchInput.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    runMacSearch();
+                }
             });
         }
 
