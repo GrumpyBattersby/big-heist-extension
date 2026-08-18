@@ -1264,6 +1264,116 @@
         return html;
     }
 
+    // Two buttons under the search box (added 2026-08-18) - a spelling-proof alternative for
+    // Person/Place records specifically: "the person might not be able to spell the name
+    // correctly" was the user's own reasoning for building this. Deliberately not offered for
+    // Crimes/Items, per the user's explicit ask. Wired up in renderPerpSheet's button-wiring
+    // block below (#mac-browse-people-button/#mac-browse-places-button), same fragment pattern
+    // as renderMacSearchBox above.
+    function renderMacBrowseButtons() {
+        let html = '<button type="button" class="panel-shop-button" id="mac-browse-people-button">Browse People (A-Z)</button>';
+        html += '<button type="button" class="panel-shop-button" id="mac-browse-places-button">Browse Places (A-Z)</button>';
+        return html;
+    }
+
+    // Step 1 of the browse-by-letter flow (added 2026-08-18) - a small alphabet grid, tapped from
+    // the Judge Home Screen's "Browse People/Places" button. Letters with no matching record
+    // (ov.availableLetters, computed server-side in "M.A.C. - Panel Browse Alphabet") are shown
+    // disabled/dimmed rather than omitted, so the grid keeps the same shape for People and Places
+    // alike. "#" (if present) covers any name that doesn't start with a letter at all.
+    const MAC_BROWSE_CATEGORY_LABELS = { person: 'People', place: 'Places' };
+
+    function renderMacBrowseAlphabet(data) {
+        const ov = data.panelOverride || {};
+        const category = ov.category || 'person';
+        const available = new Set(ov.availableLetters || []);
+        const categoryLabel = MAC_BROWSE_CATEGORY_LABELS[category] || 'Records';
+
+        let html = '<div class="section-title">Browse ' + escapeHtml(categoryLabel) + '</div>';
+        html += '<div class="juan-quote">Tap a letter to see every ' + (category === 'place' ? 'place' : 'person') + ' whose name starts with it.</div>';
+        html += '<div class="mac-letter-grid">';
+
+        const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').concat(['#']);
+        ALPHABET.forEach(function (letter) {
+            const isAvailable = available.has(letter);
+            html += '<button type="button" class="mac-letter-button mac-browse-letter-button" data-mac-letter="' + escapeHtml(letter) + '"' + (isAvailable ? '' : ' disabled') + '>' + escapeHtml(letter) + '</button>';
+        });
+
+        html += '</div>';
+        html += '<button class="panel-back-button" id="panel-mac-browse-alphabet-back-button">Back</button>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".mac-browse-letter-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const letter = btn.getAttribute("data-mac-letter");
+                queueAction("macBrowseLetter", { category: category, letter: letter });
+            });
+        });
+
+        const backButton = document.getElementById("panel-mac-browse-alphabet-back-button");
+        if (backButton) {
+            backButton.addEventListener("click", function () {
+                queueAction("clearOverride", {});
+            });
+        }
+    }
+
+    // Step 2 of the browse-by-letter flow (added 2026-08-18) - every Person/Place starting with
+    // the tapped letter, as a clickable list. Same "READ + FLAG FOR GM" tap behavior and the same
+    // spoiler-safety rule as a free-text search result (see renderMacSearchResults above and
+    // renderMacRecordDetail below) - this list only ever shows bare names, a tap is required to
+    // read anything. Unlike a free-text search, browsing itself never touches the physical Stream
+    // Deck or plays the GM alert sound - only the tap does (see "M.A.C. - Panel Browse Item
+    // Selected" in Streamer.bot), and that tap also wipes out whatever was previously flagged
+    // there rather than adding to it, per the user's explicit "it wipes the last search" spec.
+    // Back returns to the alphabet grid for the same category, not all the way to Judge Home.
+    function renderMacBrowseResults(data) {
+        const ov = data.panelOverride || {};
+        const category = ov.category || 'person';
+        const results = ov.results || [];
+        const categoryLabel = MAC_BROWSE_CATEGORY_LABELS[category] || 'Records';
+        const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
+
+        let html = '<div class="section-title">' + escapeHtml(categoryLabel) + ' - "' + escapeHtml(ov.letter || '') + '"</div>';
+        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + '. Tap a result to read it and flag it on the GM\'s Stream Deck - you can flag more than one, and you can read/flag the same one again later.</div>';
+        html += '<div class="heist-vote-grid">';
+
+        results.forEach(function (r) {
+            const key = macResultKey(r);
+            const isQueued = macSearchQueuedKeys.has(key);
+            html += '<div class="heist-vote-card' + (isQueued ? ' heist-vote-card-mine' : '') + '">';
+            html += '<div class="heist-vote-difficulty">' + (MAC_TYPE_LABELS[r.type] || String(r.type || '').toUpperCase()) + '</div>';
+            html += '<div class="heist-vote-title">' + escapeHtml(r.name || '') + '</div>';
+            html += '<button type="button" class="heist-vote-button mac-browse-result-button' + (isQueued ? ' voted' : '') + '" data-mac-name="' + escapeHtml(r.name || '') + '" data-mac-type="' + escapeHtml(r.type || '') + '">' +
+                (isQueued ? 'QUEUED - TAP TO READ AGAIN' : 'READ + FLAG FOR GM') + '</button>';
+            html += '</div>';
+        });
+
+        html += '</div>';
+        html += '<button class="panel-back-button" id="panel-mac-browse-results-back-button">Back</button>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".mac-browse-result-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const name = btn.getAttribute("data-mac-name");
+                const type = btn.getAttribute("data-mac-type");
+                macSearchQueuedKeys.add(type + "::" + name);
+                queueAction("macBrowseItemSelected", { name: name, type: type });
+                renderMacBrowseResults(data);
+            });
+        });
+
+        const backButton = document.getElementById("panel-mac-browse-results-back-button");
+        if (backButton) {
+            backButton.addEventListener("click", function () {
+                macSearchQueuedKeys = new Set();
+                queueAction("macBrowseAlphabet", { category: category });
+            });
+        }
+    }
+
     const ROBBERY_CATEGORIES = [
         { key: "cash", label: "The Bank", image: ROBBERY_BASE_URL + "/robbery-bank.png" },
         { key: "tools", label: "Hardware Store", image: ROBBERY_BASE_URL + "/robbery-hardware.png" },
@@ -1863,9 +1973,23 @@
             return;
         }
 
-        // A Judge's own read-out of ONE search result's full record (added 2026-08-18) - same
-        // early-return treatment as macSearchResults above, only ever reached by explicitly
-        // tapping a named result. See renderMacRecordDetail below.
+        // M.A.C. Browse (People/Places, added 2026-08-18) - a spelling-proof alternative to the
+        // free-text search above, for when a Judge knows roughly who/where they mean but not the
+        // exact spelling. Two screens: pick a letter (macBrowseAlphabet), then pick a result
+        // starting with that letter (macBrowseResults) - same early-return treatment as
+        // macSearchResults. See renderMacBrowseAlphabet/renderMacBrowseResults below.
+        if (overrideMode === "macBrowseAlphabet") {
+            renderMacBrowseAlphabet(data);
+            return;
+        }
+        if (overrideMode === "macBrowseResults") {
+            renderMacBrowseResults(data);
+            return;
+        }
+
+        // A Judge's own read-out of ONE search (or browse) result's full record (added
+        // 2026-08-18) - same early-return treatment as macSearchResults above, only ever reached
+        // by explicitly tapping a named result. See renderMacRecordDetail below.
         if (overrideMode === "macRecordDetail") {
             renderMacRecordDetail(data);
             return;
@@ -2662,11 +2786,16 @@
         // as showFinderPage above - folds in pickpocketNotice's expiresAt so a fresh "no results"
         // toast from a search can still break through and render.
         const judgeHomeNoticeKey = (data.pickpocketNotice && data.pickpocketNotice.expiresAt) || 0;
+        // Folds in the macSearch feature flag too (added 2026-08-18) - without this, toggling the
+        // Judge Search flag off/on while a Judge is already sitting on the plain Judge Home Screen
+        // wouldn't actually show/hide the search box until some OTHER freeze-breaking event (a
+        // fresh notice, an arrestAlert) happened to come along and force a rebuild.
+        const judgeHomeFlagKey = featureOn(data, "macSearch") ? "1" : "0";
         const contentFreezeKey = overrideMode === "findersFee"
             ? "findersFee-" + ((data.panelOverride && data.panelOverride.itemName) || "") + "-" + ((data.panelOverride && data.panelOverride.askingPrice) || 0)
             : showFinderPage ? "finderPage-" + ((data.pickpocketNotice && data.pickpocketNotice.expiresAt) || 0)
-            : (isPlayingJudgeScreen && overrideMode !== "arrestAlert") ? "judgeHome-playing-" + judgeHomeNoticeKey
-            : (isWatchingJudgeScreen && overrideMode !== "arrestAlert") ? "judgeHome-watching-" + judgeHomeNoticeKey
+            : (isPlayingJudgeScreen && overrideMode !== "arrestAlert") ? "judgeHome-playing-" + judgeHomeNoticeKey + "-" + judgeHomeFlagKey
+            : (isWatchingJudgeScreen && overrideMode !== "arrestAlert") ? "judgeHome-watching-" + judgeHomeNoticeKey + "-" + judgeHomeFlagKey
             : null;
 
         if (contentFreezeKey && lastKnownContentKey === contentFreezeKey) {
@@ -2688,7 +2817,10 @@
                 html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
             } else {
                 html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
-                html += renderMacSearchBox();
+                if (featureOn(data, "macSearch")) {
+                    html += renderMacSearchBox();
+                    html += renderMacBrowseButtons();
+                }
             }
         } else if (isWatchingJudgeScreen) {
             // Same ARREST mechanic as the playing-Judge branch above, just different flavor text
@@ -2702,7 +2834,10 @@
                 html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
             } else {
                 html += '<div class="items-text">Watching the scene from elsewhere. If the Judge on the case hasn\'t made the arrest within the first 10 seconds, you\'ll get your own shot at it.</div>';
-                html += renderMacSearchBox();
+                if (featureOn(data, "macSearch")) {
+                    html += renderMacSearchBox();
+                    html += renderMacBrowseButtons();
+                }
             }
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
@@ -3588,6 +3723,21 @@
                     e.preventDefault();
                     runMacSearch();
                 }
+            });
+        }
+
+        // Browse People/Places buttons (added 2026-08-18) - straight into the alphabet grid for
+        // that category, no input to type. See renderMacBrowseAlphabet/renderMacBrowseButtons.
+        const macBrowsePeopleButton = document.getElementById("mac-browse-people-button");
+        if (macBrowsePeopleButton) {
+            macBrowsePeopleButton.addEventListener("click", function () {
+                queueAction("macBrowseAlphabet", { category: "person" });
+            });
+        }
+        const macBrowsePlacesButton = document.getElementById("mac-browse-places-button");
+        if (macBrowsePlacesButton) {
+            macBrowsePlacesButton.addEventListener("click", function () {
+                queueAction("macBrowseAlphabet", { category: "place" });
             });
         }
 
