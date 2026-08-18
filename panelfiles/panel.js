@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-15-wally-sabotage-title-icon");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-16-glossary-how-to-use");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -1108,6 +1108,90 @@
         }
     }
 
+    // M.A.C. Search results screen - a Judges-only full-panel takeover, shown after a Judge runs
+    // a search from their Judge Home Screen (see the mac-search-input/mac-search-button wiring
+    // further down). data.panelOverride.results is a flat array of {name, type} written by
+    // Streamer.bot's "M.A.C. - Panel Search" action - type is one of "crime"/"person"/"place"/
+    // "item", used purely as a label here (the actual record lookup happens server-side once the
+    // GM physically presses the matching Stream Deck button on page 2).
+    //
+    // Clicking a result does NOT disable it and does NOT close this screen - per the user's
+    // explicit request results can be picked more than once (e.g. re-flagging the same item after
+    // the GM has moved on to something else), so buttons stay live for the whole time this screen
+    // is up. A local Set tracks which results have been clicked so far purely for the "queued"
+    // visual cue (a class toggle) - this is optimistic/client-side only, it does NOT reflect
+    // whether the matching Stream Deck button is actually still purple (the GM could have already
+    // pressed it and turned it red, or a later Populate Core run could have cleared it) - it just
+    // gives the player immediate feedback that their click registered.
+    let macSearchQueuedKeys = new Set();
+
+    function macResultKey(r) {
+        return (r.type || "") + "::" + (r.name || "");
+    }
+
+    function renderMacSearchResults(data) {
+        const ov = data.panelOverride || {};
+        const results = ov.results || [];
+
+        let html = '<div class="section-title">M.A.C. Search Results</div>';
+        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + ' for &ldquo;' + escapeHtml(ov.query || '') + '&rdquo;. Tap a result to flag it on the GM\'s Stream Deck - you can flag more than one, and you can flag the same one again later.</div>';
+        html += '<div class="heist-vote-grid">';
+
+        const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
+
+        results.forEach(function (r) {
+            const key = macResultKey(r);
+            const isQueued = macSearchQueuedKeys.has(key);
+            html += '<div class="heist-vote-card' + (isQueued ? ' heist-vote-card-mine' : '') + '">';
+            html += '<div class="heist-vote-difficulty">' + (MAC_TYPE_LABELS[r.type] || String(r.type || '').toUpperCase()) + '</div>';
+            html += '<div class="heist-vote-title">' + escapeHtml(r.name || '') + '</div>';
+            html += '<button type="button" class="heist-vote-button mac-search-result-button' + (isQueued ? ' voted' : '') + '" data-mac-name="' + escapeHtml(r.name || '') + '" data-mac-type="' + escapeHtml(r.type || '') + '">' +
+                (isQueued ? 'QUEUED - TAP TO FLAG AGAIN' : 'FLAG FOR GM') + '</button>';
+            html += '</div>';
+        });
+
+        html += '</div>';
+        html += '<button class="panel-back-button" id="panel-mac-search-back-button">Back</button>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".mac-search-result-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const name = btn.getAttribute("data-mac-name");
+                const type = btn.getAttribute("data-mac-type");
+                macSearchQueuedKeys.add(type + "::" + name);
+                queueAction("macSearchResultPicked", { name: name, type: type });
+                // Re-render immediately from the same data so the "QUEUED" state shows without
+                // waiting on the next poll - the same pattern the crime cross-reference and other
+                // instant-feedback screens in this file use.
+                renderMacSearchResults(data);
+            });
+        });
+
+        const backButton = document.getElementById("panel-mac-search-back-button");
+        if (backButton) {
+            backButton.addEventListener("click", function () {
+                macSearchQueuedKeys = new Set();
+                queueAction("clearOverride", {});
+            });
+        }
+    }
+
+    // Small search field + button shown on the Judge Home Screen (both the playing-Judge and
+    // watching-Judge variants) whenever there's no arrestAlert currently taking that space over.
+    // Wired up in renderPerpSheet's button-wiring block below (#mac-search-button), since this
+    // html is just a fragment folded into the larger Judge Home Screen html - not its own
+    // standalone render/flush like renderMacSearchResults above.
+    function renderMacSearchBox() {
+        // Reuses the same panel-text-input/panel-urgent-button classes as the existing "Ask Juan"
+        // finder search (see finder-search-input/finder-search-button above) rather than inventing
+        // new CSS classes that would need a separate stylesheet change - both are already styled
+        // and already proven to render correctly inside this panel.
+        let html = '<input type="text" class="panel-text-input" id="mac-search-input" placeholder="M.A.C. Search - name, crime, item...">';
+        html += '<button type="button" class="panel-urgent-button" id="mac-search-button">Judge M.A.C. Search</button>';
+        return html;
+    }
+
     const ROBBERY_CATEGORIES = [
         { key: "cash", label: "The Bank", image: ROBBERY_BASE_URL + "/robbery-bank.png" },
         { key: "tools", label: "Hardware Store", image: ROBBERY_BASE_URL + "/robbery-hardware.png" },
@@ -1683,6 +1767,15 @@
         // buttons, not a variant of the normal sheet. See renderWallySquadReveal below.
         if (overrideMode === "wallySquadReveal") {
             renderWallySquadReveal(data);
+            return;
+        }
+
+        // M.A.C. Search results - a Judges-only search takeover, same early-return treatment as
+        // Wally Squad above. Only ever set on the panelOverride of the Judge who actually ran the
+        // search (see "M.A.C. - Panel Search" in Streamer.bot), so no other viewer's panel is
+        // affected. See renderMacSearchResults below.
+        if (overrideMode === "macSearchResults") {
+            renderMacSearchResults(data);
             return;
         }
 
@@ -2487,6 +2580,7 @@
                 html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
             } else {
                 html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
+                html += renderMacSearchBox();
             }
         } else if (isWatchingJudgeScreen) {
             // Same ARREST mechanic as the playing-Judge branch above, just different flavor text
@@ -2500,6 +2594,7 @@
                 html += '<button class="panel-urgent-button" id="panel-arrest-button">ARREST</button>';
             } else {
                 html += '<div class="items-text">Watching the scene from elsewhere. If the Judge on the case hasn\'t made the arrest within the first 10 seconds, you\'ll get your own shot at it.</div>';
+                html += renderMacSearchBox();
             }
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
@@ -3338,6 +3433,20 @@
                 robberyResultDismissed = true;
                 queueAction("clearOverride", {});
                 if (lastFetchedData) renderPerpSheet(lastFetchedData);
+            });
+        }
+
+        const macSearchButton = document.getElementById("mac-search-button");
+        if (macSearchButton) {
+            macSearchButton.addEventListener("click", function () {
+                const input = document.getElementById("mac-search-input");
+                const query = input ? input.value.trim() : "";
+                if (!query) return;
+                // Not disabled on click, unlike most other action buttons in this file - a Judge
+                // may want to fire off several searches in quick succession while investigating,
+                // and the search itself is cheap/idempotent server-side, so there's no real risk
+                // in leaving it live.
+                queueAction("macSearch", { query: query });
             });
         }
 
@@ -4513,6 +4622,44 @@
         }
     }
 
+    // ============================
+    // "How to use" line (added 2026-08-16, per user request) - the glossary previously only ever
+    // showed what an item IS (description) and where to get it (cost/rob-from), not how it
+    // actually gets used in play. Rather than hand-writing a usage blurb per item (32 of them,
+    // and easy to let drift out of sync with the real mechanics), this is generated straight from
+    // the same bonusRoles/bonusValue/scope/heatReduction fields the server itself reads to apply
+    // the item's actual effect - see "Big Heist - Use Item" (Group-scope items, committed to a
+    // task's Use Item button) and "Pickpocket - Attempt" (Personal-scope items, applied
+    // automatically off inventory, no explicit "use" needed) for the mechanics this mirrors.
+    // Robbery's own skill-bonus math doesn't read these same fields directly, so the Personal
+    // wording below is deliberately scoped to "personal jobs" rather than naming Robbery
+    // specifically - Pickpocket is the one confirmed consumer.
+    function buildHowToUseText(def) {
+        const bonusRoles = Array.isArray(def.bonusRoles) ? def.bonusRoles : [];
+        const bonusValue = def.bonusValue || 0;
+        const scope = (def.scope || "Group").toLowerCase();
+        const heatReduction = def.heatReduction;
+
+        const hasAnyRole = bonusRoles.some(function (r) { return r.toUpperCase() === "ANY"; });
+        const roleText = bonusRoles.length === 0
+            ? null
+            : (hasAnyRole ? "any task" : bonusRoles.map(humanize).join(" or "));
+
+        const parts = [];
+        if (roleText && bonusValue > 0) {
+            if (scope === "personal") {
+                parts.push("Sits in your inventory and automatically adds +" + bonusValue + " to your own roll on a personal job (like Pickpocket) that calls for " + roleText + " - no need to \"use\" it, just have it on you.");
+            } else {
+                parts.push("Commit it to a Big Heist task that needs " + roleText + " (via that task's Use Item button) to add +" + bonusValue + " for the whole crew on that task.");
+            }
+        }
+        if (heatReduction) {
+            parts.push("Also usable from the Lay Low screen to cut your personal heat by " + heatReduction + ".");
+        }
+
+        return parts.length > 0 ? parts.join(" ") : null;
+    }
+
     function buildGlossaryListHtml(allKeys) {
         const filterLower = itemGlossaryFilter.trim().toLowerCase();
         const keys = filterLower
@@ -4542,6 +4689,7 @@
             const robText = stealLocations.length > 0
                 ? "Rob From: " + stealLocations.map(humanize).join(", ")
                 : null;
+            const howToUseText = buildHowToUseText(def);
 
             html += '<div class="glossary-item">';
             html += '<div class="glossary-item-card">';
@@ -4555,6 +4703,7 @@
             html += '</div>';
             html += '<div class="glossary-item-body">';
             html += '<div class="glossary-item-desc">' + escapeHtml(description) + '</div>';
+            if (howToUseText) html += '<div class="glossary-item-how">' + escapeHtml(howToUseText) + '</div>';
             if (costText) html += '<div class="glossary-item-cost">' + escapeHtml(costText) + '</div>';
             if (robText) html += '<div class="glossary-item-where">' + escapeHtml(robText) + '</div>';
             if (!costText && !robText) html += '<div class="glossary-item-where">Not currently obtainable</div>';
