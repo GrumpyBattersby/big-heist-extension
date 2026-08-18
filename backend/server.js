@@ -254,7 +254,11 @@ let featureFlags = {
     // Wally Squad (the Big Heist informant/social-deduction game) - defaults OFF, per the
     // streamer's request, until there's a big enough crowd watching to make it worth running.
     // Toggle via Big Heist - Toggle Feature same as every other flag here.
-    wallySquad: false
+    wallySquad: false,
+    // The Judge M.A.C. Search box on the Judge Home Screen - defaults ON since it's already live
+    // and working. Added 2026-08-18 per the user's ask to gate it with "the usual switch
+    // function" - toggle via Big Heist - Toggle Feature same as every other flag here.
+    macSearch: true
 };
 
 app.post('/api/push-feature-flags', (req, res) => {
