@@ -867,6 +867,40 @@
     .panel-text-input::placeholder {
         color: #5a7a8f;
     }
+    /* M.A.C. People/Places browse-by-letter (added 2026-08-18) - a spelling-proof alternative to
+       the free-text search box, for when a Judge knows roughly who/where they mean but not the
+       exact spelling. Small buttons that wrap into rows (see renderMacBrowseAlphabet in
+       panel.js). Letters with no matching record are dimmed and unclickable rather than left off
+       the grid entirely, so the layout stays the same 26(+1) shape for People and Places alike. */
+    .mac-letter-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 10px 0;
+    }
+    .mac-letter-button {
+        flex: 0 0 auto;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        font-family: inherit;
+        font-size: 14px;
+        font-weight: 800;
+        color: #1a1a1a;
+        background: #f5c518;
+        border: 2px solid #ffd93d;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .mac-letter-button:hover {
+        background: #ffd93d;
+    }
+    .mac-letter-button:disabled {
+        background: #2a2a2a;
+        border-color: #444;
+        color: #666;
+        cursor: default;
+    }
     /* Dedicated style for the OI!/ARREST buttons, distinct from the plain Back/Shop buttons -
        these are urgent, time-limited actions and should read as more attention-grabbing. */
     .panel-urgent-button {
