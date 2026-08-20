@@ -800,6 +800,26 @@
         margin: 0 5px;
     }
 
+    /* Persistent "stuck panel? refresh" hint (added 2026-08-21) - same always-visible placement
+       as the legal footer above, so it's reachable even if #content is dead/stuck on "Loading..."
+       and nothing inside it can be trusted to render at all. Deliberately understated (dim, small)
+       so it doesn't read as an error message during totally normal operation. */
+    .refresh-hint {
+        text-align: center;
+        margin-top: 4px;
+        font-size: 10px;
+        letter-spacing: 0.3px;
+        color: #4d7391;
+    }
+    .refresh-hint a {
+        color: #7fa8c4;
+        text-decoration: underline;
+        cursor: pointer;
+    }
+    .refresh-hint a:hover {
+        color: #dceeff;
+    }
+
     #glossary-overlay {
         display: none;
         padding: 10px;
@@ -900,6 +920,7 @@
         <span>&middot;</span>
         <a href="https://grumpybattersby.github.io/big-heist-extension/terms.html" target="_blank" rel="noopener">Terms of Service</a>
     </div>
+    <div class="refresh-hint">Panel stuck or doesn't look right? <a onclick="location.reload()">Click here to refresh</a>.</div>
     <div class="hazard-strip"></div>
 </div>
 
