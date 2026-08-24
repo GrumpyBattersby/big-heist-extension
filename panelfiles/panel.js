@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-21-loading-watchdog-refresh-hint");
+    console.log("BIG HEIST PANEL BUILD: 2026-08-16-glossary-how-to-use");
 
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
@@ -62,6 +62,14 @@
     // once a viewer's been assigned to a block. Same GitHub Pages hosting pattern as everything
     // above, in a new "blockwar" folder.
     const BLOCKWAR_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/blockwar";
+    // M.A.C. record-detail mini images (added 2026-08-23) - square-cropped thumbnails generated
+    // from the existing People ASSETS/Places ASSETS character/location art, filenames exactly
+    // matching the People Data.json/Places Data.json record name (e.g. "Max Impitus.png"). Same
+    // GitHub Pages hosting pattern as everything above. A record with no matching thumbnail (art
+    // was never made for it, or a name mismatch) just gets the image hidden via onerror below -
+    // this is expected for a small number of records rather than a bug.
+    const PEOPLE_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/people";
+    const PLACES_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/places";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -97,50 +105,6 @@
     // Cleared whenever the advert screen goes away (either the show goes live, or the panel
     // re-renders something else) - see clearStreamAdvertInterval() below.
     let streamAdvertIntervalId = null;
-
-    // Initial-load watchdog (added 2026-08-21): Render's free tier spins the backend down after
-    // a stretch of inactivity, and the very first fetchMyData() had no timeout at all - if that
-    // first request hung (cold-start taking unusually long, or genuinely never responding), the
-    // viewer was left staring at the static "Loading..." baked into panel.html forever, with
-    // nothing client-side ever updating it. Two-part fix: fetchMyData's request now aborts itself
-    // after FETCH_TIMEOUT_MS so it can never hang forever, AND if no response (success OR
-    // failure) has landed within INITIAL_LOAD_WATCHDOG_MS of the very first load, the Sector 21
-    // advert screen - already a fully self-contained, server-response-independent render - is
-    // shown in place of "Loading...". Whatever the eventually-resolving first request turns out
-    // to say (live data, off-air, or a real error) just naturally replaces that placeholder the
-    // moment it lands - this only ever fires once, for the FIRST load.
-    const FETCH_TIMEOUT_MS = 12000;
-    const INITIAL_LOAD_WATCHDOG_MS = 6000;
-    let firstResponseReceived = false;
-    let initialLoadWatchdogId = null;
-
-    function startInitialLoadWatchdog() {
-        if (firstResponseReceived || initialLoadWatchdogId) return;
-        initialLoadWatchdogId = setTimeout(function () {
-            initialLoadWatchdogId = null;
-            if (!firstResponseReceived) {
-                renderStreamAdvert();
-            }
-        }, INITIAL_LOAD_WATCHDOG_MS);
-    }
-
-    function clearInitialLoadWatchdog() {
-        firstResponseReceived = true;
-        if (initialLoadWatchdogId) {
-            clearTimeout(initialLoadWatchdogId);
-            initialLoadWatchdogId = null;
-        }
-    }
-
-    // Plain fetch() has no default timeout - a hung request (no response, no error) waits
-    // forever. Wraps fetch with AbortController so a request that's taking too long (Render cold
-    // start included) fails cleanly into the existing .catch() handling instead of hanging.
-    function fetchWithTimeout(url, options, timeoutMs) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(function () { controller.abort(); }, timeoutMs);
-        const opts = Object.assign({}, options, { signal: controller.signal });
-        return fetch(url, opts).finally(function () { clearTimeout(timeoutId); });
-    }
     // Ticks the live countdown on the Big Heist vote picker screen (see renderHeistVotePicker
     // below) - same idiom as streamAdvertIntervalId just above.
     let heistVoteIntervalId = null;
@@ -243,13 +207,6 @@
     // same panel.js) is served without the twitch-ext.min.js helper script, so `Twitch` simply
     // doesn't exist there. That absence is the signal to use the YouTube link-code flow instead of
     // waiting on an onAuthorized callback that will never fire.
-    // Started here, unconditionally, rather than inside fetchMyData() or the onAuthorized
-    // callback below - if Twitch.ext.onAuthorized itself never fires (extension authorization
-    // hiccup, not just a slow backend), fetchMyData() never even gets called, and a watchdog
-    // living inside it would never start either. Starting it here means EITHER failure mode
-    // (onAuthorized never firing, or firing fine but fetchMyData hanging) gets caught the same way.
-    startInitialLoadWatchdog();
-
     if (typeof Twitch !== "undefined" && Twitch.ext && typeof Twitch.ext.onAuthorized === "function") {
         Twitch.ext.onAuthorized(function (auth) {
             authToken = auth.token;
@@ -403,14 +360,13 @@
 
     function fetchMyData() {
         const thisRequestId = ++fetchRequestCounter;
-        fetchWithTimeout(BACKEND_URL + "/api/my-data", {
+        fetch(BACKEND_URL + "/api/my-data", {
             headers: getAuthHeaders()
-        }, FETCH_TIMEOUT_MS)
+        })
         .then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data }; }); })
         .then(function (result) {
             if (thisRequestId <= latestAppliedResponseId) return; // a newer response already landed, this one's stale
             latestAppliedResponseId = thisRequestId;
-            clearInitialLoadWatchdog();
 
             if (result.status === 403 && result.data.error === "identity_not_shared") {
                 showShareIdentityPrompt();
@@ -436,7 +392,7 @@
             // below, so it takes effect regardless of whether the show is live or the viewer's
             // even a registered perp yet. See setupFeatureFlagButtons() for the missing-flag
             // default (OFF) and Big Heist - Toggle Feature (Streamer.bot) for how these get set.
-            applyFeatureFlags(result.data.featureFlags);
+            applyFeatureFlags(result.data.featureFlags, result.data);
 
             // Per user's request - the panel is only "active" (character sheet, robbery,
             // pickpocket, everything) while the show is actually live, OR a moderator has forced
@@ -505,10 +461,6 @@
             // distinguish "genuinely can't reach the network" from "a client-side JS bug threw
             // partway through rendering," which cost real time to diagnose once already.
             console.error("fetchMyData failed:", err);
-            // A genuine failure (including our own fetchWithTimeout abort) counts as "a response
-            // landed" for watchdog purposes - stops the watchdog firing a stale advert render on
-            // top of this error message a few seconds later if this catch resolved quickly.
-            clearInitialLoadWatchdog();
             document.getElementById("content").innerHTML =
                 '<div id="status-message">Could not reach the server - try again shortly.</div>';
         });
@@ -1211,6 +1163,18 @@
         return (r.type || "") + "::" + (r.name || "");
     }
 
+    // Small list-row thumbnail (added 2026-08-23) - same PEOPLE_BASE_URL/PLACES_BASE_URL-backed
+    // art as the record detail screen's bigger image, just shown at list-row size here. Person/
+    // Place results only - Crime/Item results in a search list have no matching art. A missing
+    // file (no source art for that record) just collapses the wrapper via onerror, same graceful
+    // fallback as the detail screen.
+    function macResultThumbHtml(r) {
+        if (r.type !== 'person' && r.type !== 'place') return '';
+        const baseUrl = r.type === 'person' ? PEOPLE_BASE_URL : PLACES_BASE_URL;
+        const url = baseUrl + '/' + encodeURIComponent(r.name || '') + '.png';
+        return '<div class="mac-result-thumb"><img src="' + url + '" alt="" onerror="this.parentElement.style.display=\'none\';"></div>';
+    }
+
     function renderMacSearchResults(data) {
         const ov = data.panelOverride || {};
         const results = ov.results || [];
@@ -1225,6 +1189,7 @@
             const key = macResultKey(r);
             const isQueued = macSearchQueuedKeys.has(key);
             html += '<div class="heist-vote-card' + (isQueued ? ' heist-vote-card-mine' : '') + '">';
+            html += macResultThumbHtml(r);
             html += '<div class="heist-vote-difficulty">' + (MAC_TYPE_LABELS[r.type] || String(r.type || '').toUpperCase()) + '</div>';
             html += '<div class="heist-vote-title">' + escapeHtml(r.name || '') + '</div>';
             // Deliberately just name/type here, never the record's actual content - reading it
@@ -1278,6 +1243,16 @@
         const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
 
         let html = '<div class="section-title">' + escapeHtml(ov.name || '') + '</div>';
+
+        // Mini image (added 2026-08-23) - Person/Place records only, sourced from a thumbnail
+        // named exactly after the record (e.g. "Max Impitus.png"). A record with no matching
+        // thumbnail just loses the image via onerror - not every record has source art.
+        if ((ov.type === 'person' || ov.type === 'place') && ov.name) {
+            const macImageBaseUrl = ov.type === 'person' ? PEOPLE_BASE_URL : PLACES_BASE_URL;
+            const macImageUrl = macImageBaseUrl + '/' + encodeURIComponent(ov.name) + '.png';
+            html += '<div class="mac-record-detail-image"><img src="' + macImageUrl + '" alt="' + escapeHtml(ov.name) + '" onerror="this.parentElement.style.display=\'none\';"></div>';
+        }
+
         html += '<div class="juan-quote">' + (MAC_TYPE_LABELS[ov.type] || String(ov.type || '').toUpperCase()) + ' - flagged for the GM.</div>';
 
         if (ov.subHeading) {
@@ -1318,6 +1293,117 @@
         let html = '<input type="text" class="panel-text-input" id="mac-search-input" placeholder="M.A.C. Search - name, crime, item...">';
         html += '<button type="button" class="panel-urgent-button" id="mac-search-button">Judge M.A.C. Search</button>';
         return html;
+    }
+
+    // Two buttons under the search box (added 2026-08-18) - a spelling-proof alternative for
+    // Person/Place records specifically: "the person might not be able to spell the name
+    // correctly" was the user's own reasoning for building this. Deliberately not offered for
+    // Crimes/Items, per the user's explicit ask. Wired up in renderPerpSheet's button-wiring
+    // block below (#mac-browse-people-button/#mac-browse-places-button), same fragment pattern
+    // as renderMacSearchBox above.
+    function renderMacBrowseButtons() {
+        let html = '<button type="button" class="panel-shop-button" id="mac-browse-people-button">Browse People (A-Z)</button>';
+        html += '<button type="button" class="panel-shop-button" id="mac-browse-places-button">Browse Places (A-Z)</button>';
+        return html;
+    }
+
+    // Step 1 of the browse-by-letter flow (added 2026-08-18) - a small alphabet grid, tapped from
+    // the Judge Home Screen's "Browse People/Places" button. Letters with no matching record
+    // (ov.availableLetters, computed server-side in "M.A.C. - Panel Browse Alphabet") are shown
+    // disabled/dimmed rather than omitted, so the grid keeps the same shape for People and Places
+    // alike. "#" (if present) covers any name that doesn't start with a letter at all.
+    const MAC_BROWSE_CATEGORY_LABELS = { person: 'People', place: 'Places' };
+
+    function renderMacBrowseAlphabet(data) {
+        const ov = data.panelOverride || {};
+        const category = ov.category || 'person';
+        const available = new Set(ov.availableLetters || []);
+        const categoryLabel = MAC_BROWSE_CATEGORY_LABELS[category] || 'Records';
+
+        let html = '<div class="section-title">Browse ' + escapeHtml(categoryLabel) + '</div>';
+        html += '<div class="juan-quote">Tap a letter to see every ' + (category === 'place' ? 'place' : 'person') + ' whose name starts with it.</div>';
+        html += '<div class="mac-letter-grid">';
+
+        const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').concat(['#']);
+        ALPHABET.forEach(function (letter) {
+            const isAvailable = available.has(letter);
+            html += '<button type="button" class="mac-letter-button mac-browse-letter-button" data-mac-letter="' + escapeHtml(letter) + '"' + (isAvailable ? '' : ' disabled') + '>' + escapeHtml(letter) + '</button>';
+        });
+
+        html += '</div>';
+        html += '<button class="panel-back-button" id="panel-mac-browse-alphabet-back-button">Back</button>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".mac-browse-letter-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const letter = btn.getAttribute("data-mac-letter");
+                queueAction("macBrowseLetter", { category: category, letter: letter });
+            });
+        });
+
+        const backButton = document.getElementById("panel-mac-browse-alphabet-back-button");
+        if (backButton) {
+            backButton.addEventListener("click", function () {
+                queueAction("clearOverride", {});
+            });
+        }
+    }
+
+    // Step 2 of the browse-by-letter flow (added 2026-08-18) - every Person/Place starting with
+    // the tapped letter, as a clickable list. Same "READ + FLAG FOR GM" tap behavior and the same
+    // spoiler-safety rule as a free-text search result (see renderMacSearchResults above and
+    // renderMacRecordDetail below) - this list only ever shows bare names, a tap is required to
+    // read anything. Unlike a free-text search, browsing itself never touches the physical Stream
+    // Deck or plays the GM alert sound - only the tap does (see "M.A.C. - Panel Browse Item
+    // Selected" in Streamer.bot), and that tap also wipes out whatever was previously flagged
+    // there rather than adding to it, per the user's explicit "it wipes the last search" spec.
+    // Back returns to the alphabet grid for the same category, not all the way to Judge Home.
+    function renderMacBrowseResults(data) {
+        const ov = data.panelOverride || {};
+        const category = ov.category || 'person';
+        const results = ov.results || [];
+        const categoryLabel = MAC_BROWSE_CATEGORY_LABELS[category] || 'Records';
+        const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
+
+        let html = '<div class="section-title">' + escapeHtml(categoryLabel) + ' - "' + escapeHtml(ov.letter || '') + '"</div>';
+        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + '. Tap a result to read it and flag it on the GM\'s Stream Deck - you can flag more than one, and you can read/flag the same one again later.</div>';
+        html += '<div class="heist-vote-grid">';
+
+        results.forEach(function (r) {
+            const key = macResultKey(r);
+            const isQueued = macSearchQueuedKeys.has(key);
+            html += '<div class="heist-vote-card' + (isQueued ? ' heist-vote-card-mine' : '') + '">';
+            html += macResultThumbHtml(r);
+            html += '<div class="heist-vote-difficulty">' + (MAC_TYPE_LABELS[r.type] || String(r.type || '').toUpperCase()) + '</div>';
+            html += '<div class="heist-vote-title">' + escapeHtml(r.name || '') + '</div>';
+            html += '<button type="button" class="heist-vote-button mac-browse-result-button' + (isQueued ? ' voted' : '') + '" data-mac-name="' + escapeHtml(r.name || '') + '" data-mac-type="' + escapeHtml(r.type || '') + '">' +
+                (isQueued ? 'QUEUED - TAP TO READ AGAIN' : 'READ + FLAG FOR GM') + '</button>';
+            html += '</div>';
+        });
+
+        html += '</div>';
+        html += '<button class="panel-back-button" id="panel-mac-browse-results-back-button">Back</button>';
+
+        document.getElementById("content").innerHTML = html;
+
+        document.querySelectorAll(".mac-browse-result-button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                const name = btn.getAttribute("data-mac-name");
+                const type = btn.getAttribute("data-mac-type");
+                macSearchQueuedKeys.add(type + "::" + name);
+                queueAction("macBrowseItemSelected", { name: name, type: type });
+                renderMacBrowseResults(data);
+            });
+        });
+
+        const backButton = document.getElementById("panel-mac-browse-results-back-button");
+        if (backButton) {
+            backButton.addEventListener("click", function () {
+                macSearchQueuedKeys = new Set();
+                queueAction("macBrowseAlphabet", { category: category });
+            });
+        }
     }
 
     const ROBBERY_CATEGORIES = [
@@ -1919,9 +2005,23 @@
             return;
         }
 
-        // A Judge's own read-out of ONE search result's full record (added 2026-08-18) - same
-        // early-return treatment as macSearchResults above, only ever reached by explicitly
-        // tapping a named result. See renderMacRecordDetail below.
+        // M.A.C. Browse (People/Places, added 2026-08-18) - a spelling-proof alternative to the
+        // free-text search above, for when a Judge knows roughly who/where they mean but not the
+        // exact spelling. Two screens: pick a letter (macBrowseAlphabet), then pick a result
+        // starting with that letter (macBrowseResults) - same early-return treatment as
+        // macSearchResults. See renderMacBrowseAlphabet/renderMacBrowseResults below.
+        if (overrideMode === "macBrowseAlphabet") {
+            renderMacBrowseAlphabet(data);
+            return;
+        }
+        if (overrideMode === "macBrowseResults") {
+            renderMacBrowseResults(data);
+            return;
+        }
+
+        // A Judge's own read-out of ONE search (or browse) result's full record (added
+        // 2026-08-18) - same early-return treatment as macSearchResults above, only ever reached
+        // by explicitly tapping a named result. See renderMacRecordDetail below.
         if (overrideMode === "macRecordDetail") {
             renderMacRecordDetail(data);
             return;
@@ -2751,6 +2851,7 @@
                 html += '<div class="items-text">On duty and watching the scene. You\'ll get first shot at any arrest while you\'re in view.</div>';
                 if (featureOn(data, "macSearch")) {
                     html += renderMacSearchBox();
+                    html += renderMacBrowseButtons();
                 }
             }
         } else if (isWatchingJudgeScreen) {
@@ -2767,6 +2868,7 @@
                 html += '<div class="items-text">Watching the scene from elsewhere. If the Judge on the case hasn\'t made the arrest within the first 10 seconds, you\'ll get your own shot at it.</div>';
                 if (featureOn(data, "macSearch")) {
                     html += renderMacSearchBox();
+                    html += renderMacBrowseButtons();
                 }
             }
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
@@ -3653,6 +3755,21 @@
                     e.preventDefault();
                     runMacSearch();
                 }
+            });
+        }
+
+        // Browse People/Places buttons (added 2026-08-18) - straight into the alphabet grid for
+        // that category, no input to type. See renderMacBrowseAlphabet/renderMacBrowseButtons.
+        const macBrowsePeopleButton = document.getElementById("mac-browse-people-button");
+        if (macBrowsePeopleButton) {
+            macBrowsePeopleButton.addEventListener("click", function () {
+                queueAction("macBrowseAlphabet", { category: "person" });
+            });
+        }
+        const macBrowsePlacesButton = document.getElementById("mac-browse-places-button");
+        if (macBrowsePlacesButton) {
+            macBrowsePlacesButton.addEventListener("click", function () {
+                queueAction("macBrowseAlphabet", { category: "place" });
             });
         }
 
@@ -4602,11 +4719,19 @@
     // visible just because its flag wasn't found. In normal operation the flag is always present
     // (see backend/server.js's featureFlags default object), so this only matters as a fail-safe.
     // ============================
-    function applyFeatureFlags(flags) {
+    function applyFeatureFlags(flags, data) {
         const f = flags || {};
+        // Judges don't need the Item Glossary (added 2026-08-24, per user's explicit request -
+        // "remove the item glossary from the Judges panel, they don't need it") - it's a
+        // perp-only shopping reference, not something a Judge/GM has any use for. Hidden here
+        // regardless of the global itemGlossary flag, for BOTH a playing Judge and a
+        // watching-Judges-group member (same pair of checks used elsewhere for "is this viewer
+        // a Judge" - see isPlayingJudgeScreen/isWatchingJudgeScreen in renderPerpSheet). The
+        // Achievements button is untouched - only the glossary was called out.
+        const isJudgeViewer = !!(data && ((data.assignedJudgeName && data.judgeIsPlaying) || data.isWatchingJudge));
         const glossaryBtn = document.getElementById("glossary-open-button");
         const achievementsBtn = document.getElementById("achievements-open-button");
-        if (glossaryBtn) glossaryBtn.style.display = f.itemGlossary ? "" : "none";
+        if (glossaryBtn) glossaryBtn.style.display = (f.itemGlossary && !isJudgeViewer) ? "" : "none";
         if (achievementsBtn) achievementsBtn.style.display = f.achievements ? "" : "none";
     }
 
