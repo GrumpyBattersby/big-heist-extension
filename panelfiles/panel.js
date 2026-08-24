@@ -1158,6 +1158,15 @@
     // pressed it and turned it red, or a later Populate Core run could have cleared it) - it just
     // gives the player immediate feedback that their click registered.
     let macSearchQueuedKeys = new Set();
+    // Tracks which records THIS Judge has explicitly pressed "Flag to GM" for this session (added
+    // 2026-08-24) - purely a client-side instant-feedback set, same pattern as
+    // macSearchQueuedKeys above. Reading a record no longer auto-flags it (see renderMacRecordDetail
+    // below) - flagging is now its own deliberate action, separate from reading, per the user's
+    // spec: "we're going to move the flagging the GM function to a button on the details page so
+    // it's only used when they're sure they want to push it to the GM." The actual GM-facing
+    // effect now lands on the iCUE Left Stream Deck board (see M.A.C. - Panel Flag To GM /
+    // M.A.C. - Render Flag Board on the Streamer.bot side), not the old S21 page-2 purple lanes.
+    let macFlaggedKeys = new Set();
 
     function macResultKey(r) {
         return (r.type || "") + "::" + (r.name || "");
@@ -1180,7 +1189,7 @@
         const results = ov.results || [];
 
         let html = '<div class="section-title">M.A.C. Search Results</div>';
-        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + ' for &ldquo;' + escapeHtml(ov.query || '') + '&rdquo;. Tap a result to read it and flag it on the GM\'s Stream Deck - you can flag more than one, and you can read/flag the same one again later.</div>';
+        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + ' for &ldquo;' + escapeHtml(ov.query || '') + '&rdquo;. Tap a result to read it - reading it never flags it, there\'s a separate Flag to GM button once you\'re sure.</div>';
         html += '<div class="heist-vote-grid">';
 
         const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
@@ -1197,7 +1206,7 @@
             // time, per the user's spoiler-safety ask ("they'd need to know the actual name and
             // pull it individually"). See renderMacRecordDetail below for what a tap reveals.
             html += '<button type="button" class="heist-vote-button mac-search-result-button' + (isQueued ? ' voted' : '') + '" data-mac-name="' + escapeHtml(r.name || '') + '" data-mac-type="' + escapeHtml(r.type || '') + '">' +
-                (isQueued ? 'QUEUED - TAP TO READ AGAIN' : 'READ + FLAG FOR GM') + '</button>';
+                (isQueued ? 'READ - TAP TO READ AGAIN' : 'READ RECORD') + '</button>';
             html += '</div>';
         });
 
@@ -1211,9 +1220,9 @@
                 const name = btn.getAttribute("data-mac-name");
                 const type = btn.getAttribute("data-mac-type");
                 macSearchQueuedKeys.add(type + "::" + name);
-                // "macRecordRead" (added 2026-08-18) fetches the full record for THIS Judge's own
-                // panel (see renderMacRecordDetail) AND still flags it purple for the GM, same as
-                // the old "macSearchResultPicked" always did - one click does both now.
+                // "macRecordRead" (added 2026-08-18, no longer auto-flags as of 2026-08-24) fetches
+                // the full record for THIS Judge's own panel (see renderMacRecordDetail) only -
+                // flagging it to the GM is now a separate deliberate button on that detail screen.
                 queueAction("macRecordRead", { name: name, type: type });
                 // Re-render immediately from the same data so the "QUEUED" state shows without
                 // waiting on the next poll - the same pattern the crime cross-reference and other
@@ -1253,7 +1262,7 @@
             html += '<div class="mac-record-detail-image"><img src="' + macImageUrl + '" alt="' + escapeHtml(ov.name) + '" onerror="this.parentElement.style.display=\'none\';"></div>';
         }
 
-        html += '<div class="juan-quote">' + (MAC_TYPE_LABELS[ov.type] || String(ov.type || '').toUpperCase()) + ' - flagged for the GM.</div>';
+        html += '<div class="juan-quote">' + (MAC_TYPE_LABELS[ov.type] || String(ov.type || '').toUpperCase()) + '</div>';
 
         if (ov.subHeading) {
             html += '<div class="skills-text" style="white-space: pre-wrap; margin-bottom: 8px;">' + escapeHtml(ov.subHeading) + '</div>';
@@ -1268,9 +1277,29 @@
             html += '<div class="juan-quote">M.A.C. has nothing else on file for this one.</div>';
         }
 
+        // Flag to GM (added 2026-08-24) - the ONLY way a record now reaches the GM's iCUE Left
+        // Stream Deck board. Deliberately separate from reading (see macFlaggedKeys above) - per
+        // the user's spec, this only fires when the Judge is sure they want to push it, not on
+        // every read. Can be pressed more than once (each press just re-flags/re-inserts it at
+        // the front of the GM's board - harmless, matches "you can read/flag the same one again
+        // later" from the results screens).
+        const macFlagKey = (ov.type || '') + '::' + (ov.name || '');
+        const macAlreadyFlagged = macFlaggedKeys.has(macFlagKey);
+        html += '<button type="button" class="panel-urgent-button" id="mac-flag-to-gm-button">' +
+            (macAlreadyFlagged ? 'FLAGGED FOR GM - TAP TO RE-FLAG' : 'FLAG TO GM') + '</button>';
+
         html += '<button class="panel-back-button" id="panel-mac-record-detail-back-button">Back to Results</button>';
 
         document.getElementById("content").innerHTML = html;
+
+        const flagButton = document.getElementById("mac-flag-to-gm-button");
+        if (flagButton) {
+            flagButton.addEventListener("click", function () {
+                macFlaggedKeys.add(macFlagKey);
+                queueAction("macFlagToGm", { name: ov.name, type: ov.type });
+                renderMacRecordDetail(data);
+            });
+        }
 
         const backButton = document.getElementById("panel-mac-record-detail-back-button");
         if (backButton) {
@@ -1367,7 +1396,7 @@
         const MAC_TYPE_LABELS = { crime: 'CRIME', person: 'PERSON', place: 'PLACE', item: 'ITEM' };
 
         let html = '<div class="section-title">' + escapeHtml(categoryLabel) + ' - "' + escapeHtml(ov.letter || '') + '"</div>';
-        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + '. Tap a result to read it and flag it on the GM\'s Stream Deck - you can flag more than one, and you can read/flag the same one again later.</div>';
+        html += '<div class="juan-quote">' + results.length + ' match' + (results.length === 1 ? '' : 'es') + '. Tap a result to read it - reading it never flags it, there\'s a separate Flag to GM button once you\'re sure.</div>';
         html += '<div class="heist-vote-grid">';
 
         results.forEach(function (r) {
@@ -1378,7 +1407,7 @@
             html += '<div class="heist-vote-difficulty">' + (MAC_TYPE_LABELS[r.type] || String(r.type || '').toUpperCase()) + '</div>';
             html += '<div class="heist-vote-title">' + escapeHtml(r.name || '') + '</div>';
             html += '<button type="button" class="heist-vote-button mac-browse-result-button' + (isQueued ? ' voted' : '') + '" data-mac-name="' + escapeHtml(r.name || '') + '" data-mac-type="' + escapeHtml(r.type || '') + '">' +
-                (isQueued ? 'QUEUED - TAP TO READ AGAIN' : 'READ + FLAG FOR GM') + '</button>';
+                (isQueued ? 'READ - TAP TO READ AGAIN' : 'READ RECORD') + '</button>';
             html += '</div>';
         });
 
