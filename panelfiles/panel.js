@@ -4,6 +4,41 @@
     // much easier than digging through the Network tab.
     console.log("BIG HEIST PANEL BUILD: 2026-08-16-glossary-how-to-use");
 
+    // INSTANT CLICK FEEDBACK (added 2026-08-24, per user request - "there's often a delay til the
+    // panel updates... change the button at the time of clicking so they know they've clicked.
+    // Some buttons have this eg read details but not all do for example the back buttons").
+    //
+    // Every server-bound button in this panel (results, back buttons, shop buttons, browse
+    // letters, flag/vote buttons, etc) lives inside #content, whose innerHTML gets wholesale
+    // replaced by every render*() function in this file - a small handful of buttons (the M.A.C.
+    // read buttons, mostly) already hand-rolled their own instant feedback by re-rendering
+    // locally from cached data before the poll catches up, but most just sat there doing nothing
+    // visible until the next poll/action response came back, which is what read as "did that even
+    // register?" during the round-trip delay.
+    //
+    // Rather than hand-add bespoke feedback to every individual button (dozens of them, scattered
+    // across many render functions), one delegated click listener on #content dims + disables
+    // WHICHEVER button was just clicked, immediately, before anything else runs. The dimmed state
+    // needs no manual cleanup: because it's scoped to #content specifically (not the whole
+    // document), and because #content's innerHTML is replaced wholesale on essentially every
+    // click's resulting render, the old (dimmed) button element is simply discarded the moment
+    // fresh content arrives - same lifecycle the existing "voted"/"queued" instant-feedback states
+    // already rely on. Deliberately does NOT cover the persistent bottom buttons (Item Glossary,
+    // Achievements) or their overlay close buttons - those live OUTSIDE #content specifically so
+    // they survive re-renders, and toggling them doesn't hit the network at all, so there's no
+    // round-trip delay to mask and disabling them would leave them stuck (nothing ever replaces
+    // that specific button to clear the disabled state).
+    document.addEventListener("DOMContentLoaded", function () {
+        const contentEl = document.getElementById("content");
+        if (!contentEl) return;
+        contentEl.addEventListener("click", function (e) {
+            const btn = e.target.closest("button");
+            if (!btn || btn.disabled) return;
+            btn.classList.add("panel-button-pressed");
+            btn.disabled = true;
+        }, true);
+    });
+
     const BACKEND_URL = "https://big-heist-backend.onrender.com";
     // Mugshots are hosted on GitHub Pages (NOT raw.githubusercontent.com - that gets rate-limited).
     // Format: https://YOUR-USERNAME.github.io/YOUR-REPO/mugshots/{userId}.png
@@ -1285,8 +1320,11 @@
         // later" from the results screens).
         const macFlagKey = (ov.type || '') + '::' + (ov.name || '');
         const macAlreadyFlagged = macFlaggedKeys.has(macFlagKey);
+        // Split across 2 explicit lines at the hyphen (added 2026-08-24, per user feedback -
+        // "it'd be good to have 2 lines for the text split where the hyphen is instead of
+        // wrapping") rather than letting the button's own text-wrap break it wherever it likes.
         html += '<button type="button" class="panel-urgent-button" id="mac-flag-to-gm-button">' +
-            (macAlreadyFlagged ? 'FLAGGED FOR GM - TAP TO RE-FLAG' : 'FLAG TO GM') + '</button>';
+            (macAlreadyFlagged ? 'FLAGGED FOR GM<br>TAP TO RE-FLAG' : 'FLAG TO GM') + '</button>';
 
         html += '<button class="panel-back-button" id="panel-mac-record-detail-back-button">Back to Results</button>';
 
