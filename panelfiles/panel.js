@@ -105,6 +105,15 @@
     // this is expected for a small number of records rather than a bug.
     const PEOPLE_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/people";
     const PLACES_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/places";
+    // M.A.C. item thumbnails (added 2026-08-28) - the "Items ASSETS"/"Items Data.json" M.A.C.
+    // catalog (Mega-Tense, Obalmond, Judge Helmet, etc.) - deliberately separate from
+    // ITEMS_BASE_URL above, which serves the Big Heist mechanics gear catalog (Crowbar, Lockpick,
+    // etc. from C:\DREDD 2\heist\itemcatalog.json). Filenames match the M.A.C. item's data KEY
+    // exactly (e.g. "Mega-Tense.png", "Street Judge Ration Pack.png"), same convention as
+    // PEOPLE_BASE_URL/PLACES_BASE_URL above - NOT the record's "imageFile" field, which uses a
+    // non-breaking hyphen in several source filenames and doesn't always match the key (e.g.
+    // "Street Judge Ration Pack" -> imageFile "Judge Ration Pack.png").
+    const MAC_ITEMS_BASE_URL = "https://grumpybattersby.github.io/big-heist-extension/mac-items";
 
     let authToken = null;
     // Set only for the standalone (non-Twitch-Extension) build, once the viewer has typed
@@ -1207,14 +1216,14 @@
         return (r.type || "") + "::" + (r.name || "");
     }
 
-    // Small list-row thumbnail (added 2026-08-23) - same PEOPLE_BASE_URL/PLACES_BASE_URL-backed
-    // art as the record detail screen's bigger image, just shown at list-row size here. Person/
-    // Place results only - Crime/Item results in a search list have no matching art. A missing
-    // file (no source art for that record) just collapses the wrapper via onerror, same graceful
-    // fallback as the detail screen.
+    // Small list-row thumbnail (added 2026-08-23, Item support added 2026-08-28) - same
+    // PEOPLE_BASE_URL/PLACES_BASE_URL/MAC_ITEMS_BASE_URL-backed art as the record detail screen's
+    // bigger image, just shown at list-row size here. Person/Place/Item results only - Crime
+    // results in a search list have no matching art. A missing file (no source art for that
+    // record) just collapses the wrapper via onerror, same graceful fallback as the detail screen.
     function macResultThumbHtml(r) {
-        if (r.type !== 'person' && r.type !== 'place') return '';
-        const baseUrl = r.type === 'person' ? PEOPLE_BASE_URL : PLACES_BASE_URL;
+        if (r.type !== 'person' && r.type !== 'place' && r.type !== 'item') return '';
+        const baseUrl = r.type === 'person' ? PEOPLE_BASE_URL : (r.type === 'place' ? PLACES_BASE_URL : MAC_ITEMS_BASE_URL);
         const url = baseUrl + '/' + encodeURIComponent(r.name || '') + '.png';
         return '<div class="mac-result-thumb"><img src="' + url + '" alt="" onerror="this.parentElement.style.display=\'none\';"></div>';
     }
@@ -1288,11 +1297,12 @@
 
         let html = '<div class="section-title">' + escapeHtml(ov.name || '') + '</div>';
 
-        // Mini image (added 2026-08-23) - Person/Place records only, sourced from a thumbnail
-        // named exactly after the record (e.g. "Max Impitus.png"). A record with no matching
-        // thumbnail just loses the image via onerror - not every record has source art.
-        if ((ov.type === 'person' || ov.type === 'place') && ov.name) {
-            const macImageBaseUrl = ov.type === 'person' ? PEOPLE_BASE_URL : PLACES_BASE_URL;
+        // Mini image (added 2026-08-23, Item support added 2026-08-28) - Person/Place/Item
+        // records only, sourced from a thumbnail named exactly after the record (e.g.
+        // "Max Impitus.png", "Mega-Tense.png"). A record with no matching thumbnail just loses
+        // the image via onerror - not every record has source art.
+        if ((ov.type === 'person' || ov.type === 'place' || ov.type === 'item') && ov.name) {
+            const macImageBaseUrl = ov.type === 'person' ? PEOPLE_BASE_URL : (ov.type === 'place' ? PLACES_BASE_URL : MAC_ITEMS_BASE_URL);
             const macImageUrl = macImageBaseUrl + '/' + encodeURIComponent(ov.name) + '.png';
             html += '<div class="mac-record-detail-image"><img src="' + macImageUrl + '" alt="' + escapeHtml(ov.name) + '" onerror="this.parentElement.style.display=\'none\';"></div>';
         }
