@@ -2947,6 +2947,15 @@
                     html += renderMacSearchBox();
                     html += renderMacBrowseButtons();
                 }
+                // Judge/Perp panel-view toggle (added 2026-08-29, per the user's request) - lets any
+                // Judges-group member play the heist as an ordinary Perp instead of sitting on the
+                // Watching Judge screen. Only offered here, not on isPlayingJudgeScreen - a Judge
+                // actively visible in OBS as their own character is clearly on duty right now, so
+                // there's nothing to opt out of until they step out of frame. Server-side, this just
+                // flips membership in the JudgePlayingAsPerp global var (Big Heist - Process Panel
+                // Actions' "toggleJudgePerpMode" case) - Sync To Extension folds that into
+                // isWatchingJudge so the very next poll shows the normal perp sheet instead.
+                html += '<button class="panel-back-button" id="panel-judge-play-perp-button">Play as a Perp instead</button>';
             }
         } else if (overrideMode === "robberyResult" && !robberyResultDismissed) {
             const rd = robberyCinematicData || {};
@@ -3556,6 +3565,14 @@
             });
             html += '<button class="panel-back-button" id="panel-graffiti-cancel">&larr; Cancel</button>';
         } else {
+            // Same toggle feature as the Watching Judge Home Screen above, in reverse - a Judge
+            // currently playing as an ordinary Perp (judgePlayingAsPerp true) sees this same normal
+            // character sheet everyone else gets, plus a small way back. isJudgeAccount is what
+            // separates this from a normal viewer, who never sees the button at all.
+            if (data.isJudgeAccount && data.judgePlayingAsPerp) {
+                html += '<button class="panel-back-button" id="panel-judge-back-to-judge-button">Back to Judge duty</button>';
+            }
+
             html += '<div class="section-title">Skills</div>';
             const skillKeys = Object.keys(data.skills || {}).sort();
             if (skillKeys.length === 0) {
@@ -3880,6 +3897,25 @@
                 const ov = data.panelOverride || {};
                 queueAction("confirmDistract", { perpId: ov.perpId || "", perpName: ov.perpName || "" });
                 queueAction("clearOverride", {});
+            });
+        }
+
+        // Judge/Perp panel-view toggle (added 2026-08-29) - same double-click protection as every
+        // other one-shot panel button here. Both buttons queue the same "toggleJudgePerpMode"
+        // action, since it just flips membership either way server-side.
+        const judgePlayPerpButton = document.getElementById("panel-judge-play-perp-button");
+        if (judgePlayPerpButton) {
+            judgePlayPerpButton.addEventListener("click", function () {
+                judgePlayPerpButton.disabled = true;
+                queueAction("toggleJudgePerpMode", {});
+            });
+        }
+
+        const judgeBackToJudgeButton = document.getElementById("panel-judge-back-to-judge-button");
+        if (judgeBackToJudgeButton) {
+            judgeBackToJudgeButton.addEventListener("click", function () {
+                judgeBackToJudgeButton.disabled = true;
+                queueAction("toggleJudgePerpMode", {});
             });
         }
 
