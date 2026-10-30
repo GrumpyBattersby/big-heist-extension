@@ -221,6 +221,40 @@
         padding: 2px 8px;
         border-radius: 3px;
     }
+    /* A-Z browse grid (M.A.C. Browse People/Places) - added 2026-08-24 to replace the unstyled
+       default button flow (which rendered as a cramped, touching wall of letters) with an actual
+       spaced-out matrix. */
+    .mac-letter-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 8px;
+        margin: 10px 0;
+        width: 100%;
+    }
+    .mac-letter-button {
+        min-width: 0;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: inherit;
+        font-size: 15px;
+        font-weight: 700;
+        color: #f0e6d2;
+        background: #b0202a;
+        border: 1px solid rgba(240, 230, 210, 0.4);
+        border-radius: 6px;
+        padding: 0;
+        cursor: pointer;
+    }
+    .mac-letter-button:hover:not(:disabled) {
+        background: #d4283a;
+    }
+    .mac-letter-button:disabled {
+        opacity: 0.3;
+        cursor: default;
+    }
     .panel-back-button, .panel-shop-button {
         display: block;
         width: 100%;
@@ -526,6 +560,23 @@
         padding: 10px;
         background: rgba(0, 0, 0, 0.2);
         position: relative;
+        overflow: hidden;
+    }
+    .mac-result-thumb {
+        width: 44px;
+        height: 44px;
+        float: left;
+        margin: 0 10px 6px 0;
+        overflow: hidden;
+        border-radius: 6px;
+        border: 1px solid rgba(240, 230, 210, 0.3);
+        background: rgba(0, 0, 0, 0.15);
+    }
+    .mac-result-thumb img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
     }
     .heist-vote-card-mine {
         border-color: #ffcf4d;
@@ -542,6 +593,23 @@
         width: 100%;
         display: block;
         object-fit: cover;
+    }
+    .mac-record-detail-image {
+        max-width: 260px;
+        max-height: 260px;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 2px solid #b0202a;
+        margin: 4px auto 10px auto;
+        display: flex;
+    }
+    .mac-record-detail-image img {
+        max-width: 100%;
+        max-height: 260px;
+        width: auto;
+        height: auto;
+        display: block;
+        margin: 0 auto;
     }
     .heist-vote-votes {
         position: absolute;
@@ -1178,6 +1246,17 @@
     }
     button:hover { background: #8f241c; }
 
+    /* Instant click feedback (added 2026-08-24) - applied via JS the moment ANY button inside
+       #content is clicked, so there's an immediate visible response even during the network
+       round-trip delay before the panel actually updates. See the delegated click listener near
+       the top of panel.js for how/why this gets applied and cleared. */
+    .panel-button-pressed,
+    .panel-button-pressed:hover {
+        opacity: 0.5;
+        background: #6b6b6b;
+        cursor: default;
+    }
+
     /* Personal escape kit - shown in the running-heist view under the getaway art. */
     .escape-kit-note {
         font-size: 11px;
@@ -1446,6 +1525,8 @@
         letter-spacing: 2px;
     }
 </style>
+<!-- Crime Board (players' shared investigation board) - styles are all scoped to #cb. -->
+<link rel="stylesheet" href="crimeboard.css">
 </head>
 <body>
 
@@ -1459,6 +1540,7 @@
     <button class="glossary-open-button" id="glossary-open-button" type="button" style="display:none;">Item Glossary</button>
     <div id="achievements-overlay"></div>
     <button class="glossary-open-button" id="achievements-open-button" type="button" style="display:none;">Achievements</button>
+    <button class="glossary-open-button" id="crimeboard-open-button" type="button" style="display:none;">Crime Board</button>
     <div class="legal-footer">
         <a href="https://grumpybattersby.github.io/big-heist-extension/privacy.html" target="_blank" rel="noopener">Privacy Notice</a>
         <span>&middot;</span>
@@ -1468,6 +1550,11 @@
     <div class="hazard-strip"></div>
 </div>
 
+<!-- The Crime Board draws itself into #cb, over the whole panel, when its button is clicked. -->
+<div id="cb" hidden></div>
+
+<script src="cytoscape.min.js"></script>
+<script src="crimeboard.js"></script>
 <script src="panel.js"></script>
 
 </body>
