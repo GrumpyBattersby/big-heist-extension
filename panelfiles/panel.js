@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-08-16-glossary-how-to-use");
+    console.log("BIG HEIST PANEL BUILD: 2026-10-30-crime-board");
 
     // INSTANT CLICK FEEDBACK (added 2026-08-24, per user request - "there's often a delay til the
     // panel updates... change the button at the time of clicking so they know they've clicked.
@@ -315,6 +315,11 @@
     function getAuthHeaders() {
         return sessionToken ? { "X-YT-Session": sessionToken } : { "Authorization": "Bearer " + authToken };
     }
+
+    // CRIME BOARD bridge (added 2026-10-30) - crimeboard.js is a separate file in panel.zip, so
+    // this hands it the backend URL and this viewer's auth headers instead of it duplicating the
+    // Twitch JWT / YouTube link-code logic above.
+    window.BigHeistPanel = { backendUrl: BACKEND_URL, getAuthHeaders: getAuthHeaders };
 
     // Entry point for the standalone build. Tries a previously-linked session first (saves a
     // YouTube viewer from re-linking on every reload); only falls through to the !link <code>
@@ -4846,6 +4851,13 @@
         const achievementsBtn = document.getElementById("achievements-open-button");
         if (glossaryBtn) glossaryBtn.style.display = (f.itemGlossary && !isJudgeViewer) ? "" : "none";
         if (achievementsBtn) achievementsBtn.style.display = f.achievements ? "" : "none";
+
+        // Crime Board (added 2026-10-30) - players only: a Judges-group member, or anyone with a
+        // Judge/Perp character assigned, plus the broadcaster as GM. The backend checks this again
+        // on every request; this only decides whether the button shows.
+        const isBoardPlayer = !!(data && (data.assignedJudgeName || data.assignedPerpName || data.isWatchingJudge));
+        const isBroadcaster = typeof Twitch !== "undefined" && Twitch.ext && Twitch.ext.viewer && Twitch.ext.viewer.role === "broadcaster";
+        if (window.CrimeBoard) window.CrimeBoard.setAccess(!!f.crimeBoard && (isBoardPlayer || isBroadcaster));
     }
 
     // Used inline inside renderPerpSheet for the action buttons that live inside the character

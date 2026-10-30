@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Crime Board · OBS</title>
+<!--
+  CRIME BOARD - OBS BROWSER SOURCE (added 2026-10-30)
+  A read-only, holographic view of the players' Crime Board for the stream. Lives on GitHub Pages
+  next to the panel files:
+      https://grumpybattersby.github.io/big-heist-extension/panelfiles/crimeboard-obs.html?key=YOUR_OBS_KEY
+  Add &transparent=1 to drop the city background and overlay it on another scene.
+  The key is CRIMEBOARD_OBS_KEY from Render. Keep the URL private - it's in OBS only, never the panel.
+  What it zooms to is set by the GM ("Show on stream" in the board) or Streamer.bot
+  (Crime Board - Show On Stream).
+-->
+<link rel="stylesheet" href="crimeboard.css">
+<style>html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }</style>
+</head>
+<body>
+<div id="cb"></div>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    window.CRIMEBOARD_OBS = {
+      backendUrl: q.get('backend') || 'https://big-heist-backend.onrender.com',
+      key: q.get('key') || '',
+      clear: q.get('transparent') === '1'
+    };
+  })();
+</script>
+<script src="cytoscape.min.js"></script>
+<script src="crimeboard.js"></script>
+</body>
+</html>
