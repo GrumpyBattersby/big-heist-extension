@@ -27,10 +27,27 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const fs = require('fs');
 const crypto = require('crypto');
+// Shared protections (constant-time secret checks, rate limits) - see guard.js. Added 2026-10-30.
+const { secretOk, rateLimit, counter } = require('./guard');
 
 const app = express();
+// Render sits behind one proxy; this makes req.ip the viewer's real IP for the rate limits below.
+app.set('trust proxy', 1);
 app.use(cors());
-app.use(express.json());
+// JSON bodies are capped at Express's 100kb default everywhere except the Crime Board routes,
+// which parse their own bodies with their own per-route limits (see crimeboard.js).
+const parseJson = express.json();
+app.use((req, res, next) => req.path.startsWith('/api/crimeboard') ? next() : parseJson(req, res, next));
+
+// Rate limits for the routes any viewer can call (added 2026-10-30). Viewers can read and edit
+// the panel's code in their own browser, so the server is what has to stop floods.
+const perIp = req => req.ip;
+const viewerReadLimit = rateLimit({ name: 'viewer-read', max: 120, windowMs: 60000, key: perIp });
+const linkStartLimit = rateLimit({ name: 'yt-link-start', max: 10, windowMs: 60000, key: perIp });
+const queueIpLimit = rateLimit({ name: 'queue-ip', max: 40, windowMs: 10000, key: perIp });
+const queueUserOver = counter({ max: 15, windowMs: 10000 });
+const MAX_PENDING_ACTIONS = 1000;
+const MAX_ACTION_PAYLOAD_CHARS = 4000;
 
 const PORT = process.env.PORT || 3000;
 const PUSH_SECRET = process.env.PUSH_SECRET;
@@ -97,7 +114,7 @@ function computeEffectiveLive() {
 
 app.post('/api/push-stream-status', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
     const { rawLive, overrideMode } = req.body;
@@ -135,7 +152,7 @@ let heistVote = {
 
 app.post('/api/push-heist-vote', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
     const { active, candidates, votingEndsAt, votes, resolvedWinnerKey, resolvedAt } = req.body;
@@ -172,7 +189,7 @@ let blockWar = {
 
 app.post('/api/push-block-war', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
     const { active, phase, teams, names, votes, attackScore, defenseScore, votingEndsAt, round, winner } = req.body;
@@ -211,7 +228,7 @@ let snitchLine = {
 
 app.post('/api/push-snitch-line', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
     const { active, candidates, votes, resolvedTargets } = req.body;
@@ -258,12 +275,15 @@ let featureFlags = {
     // The Judge M.A.C. Search box on the Judge Home Screen - defaults ON since it's already live
     // and working. Added 2026-08-18 per the user's ask to gate it with "the usual switch
     // function" - toggle via Big Heist - Toggle Feature same as every other flag here.
-    macSearch: true
+    macSearch: true,
+    // The players' Crime Board (button under the panel, players and the GM only) - added
+    // 2026-10-30, defaults ON. Toggle via Big Heist - Toggle Feature same as every other flag here.
+    crimeBoard: true
 };
 
 app.post('/api/push-feature-flags', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
     const { flags } = req.body;
@@ -286,7 +306,7 @@ app.get('/api/feature-flags', (req, res) => {
 // ============================
 app.post('/api/push-data', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -372,7 +392,7 @@ app.post('/api/push-data', (req, res) => {
 // ============================
 app.post('/api/delete-data', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -415,7 +435,7 @@ function pruneExpiredLinkSessions() {
 // Called by the standalone panel on first load (or whenever it has no stored session yet) -
 // no auth needed here, this just hands out a fresh code to display. Worst case if abused is a
 // pile of harmless unclaimed codes - nothing sensitive is exposed by generating one.
-app.post('/api/youtube-link/start', (req, res) => {
+app.post('/api/youtube-link/start', linkStartLimit, (req, res) => {
     pruneExpiredLinkSessions();
 
     const sessionToken = crypto.randomBytes(24).toString('hex');
@@ -452,7 +472,7 @@ app.post('/api/youtube-link/start', (req, res) => {
 // chat identity.
 app.post('/api/youtube-link/claim', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -478,7 +498,7 @@ app.post('/api/youtube-link/claim', (req, res) => {
 // Called by the standalone panel, polling every couple of seconds after it shows a code,
 // until this comes back claimed - at which point the panel stores the sessionToken and
 // starts using it for every subsequent request, same role a Twitch JWT plays.
-app.get('/api/youtube-link/status', (req, res) => {
+app.get('/api/youtube-link/status', viewerReadLimit, (req, res) => {
     res.set('Cache-Control', 'no-store');
 
     const sessionToken = req.query.sessionToken;
@@ -539,7 +559,7 @@ function resolveIdentity(req) {
 // MY DATA - called by the Extension frontend (Twitch JWT) or the standalone YouTube panel
 // (link-code session token) - see resolveIdentity() above for how either path is verified.
 // ============================
-app.get('/api/my-data', (req, res) => {
+app.get('/api/my-data', viewerReadLimit, (req, res) => {
     // This endpoint is per-viewer and personalized - caching it (whether by the browser,
     // Twitch's CDN, or any proxy in between) would serve one viewer's data to another,
     // or stale data after an update. Always disallow caching here.
@@ -648,7 +668,7 @@ let presentViewers = [];
 
 app.post('/api/push-present-viewers', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -669,7 +689,7 @@ let shopListing = [];
 
 app.post('/api/push-shop-listing', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -690,7 +710,7 @@ let itemCatalog = {};
 
 app.post('/api/item-catalog', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -718,7 +738,7 @@ let currentBlockData = { block: null, locations: {}, difficultyMultiplier: 1.0 }
 
 app.post('/api/current-block', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -742,7 +762,7 @@ app.get('/api/current-block', (req, res) => {
 // link-code session, so nobody can queue an action pretending to be someone else). Now stamps
 // the queued action with the caller's resolved platform, so Process Panel Actions can dispatch
 // it against the right game logic instead of assuming Twitch.
-app.post('/api/queue-action', (req, res) => {
+app.post('/api/queue-action', queueIpLimit, (req, res) => {
     const identity = resolveIdentity(req);
     if (identity.error) {
         const status = identity.error === 'identity_not_shared' || identity.error === 'invalid_session' ? 403 : 401;
@@ -750,8 +770,24 @@ app.post('/api/queue-action', (req, res) => {
     }
 
     const { type, payload } = req.body;
-    if (!type) {
+    if (!type || typeof type !== 'string' || type.length > 60) {
         return res.status(400).json({ error: 'type is required' });
+    }
+    // crimeBoard* actions can only be queued by the server itself (the GM's "Show on stream"),
+    // never by a viewer posting here directly.
+    if (/^crimeBoard/i.test(type)) {
+        return res.status(403).json({ error: 'not_allowed' });
+    }
+    // Caps added 2026-10-30: one viewer can't flood Streamer.bot's queue, and the queue itself
+    // can't grow without limit if Streamer.bot is closed.
+    if (queueUserOver(identity.userId)) {
+        return res.status(429).json({ error: 'rate_limited', message: 'Slow down a little and try again in a moment.' });
+    }
+    if (JSON.stringify(payload || {}).length > MAX_ACTION_PAYLOAD_CHARS) {
+        return res.status(413).json({ error: 'payload_too_large' });
+    }
+    if (pendingActions.length >= MAX_PENDING_ACTIONS) {
+        return res.status(503).json({ error: 'queue_full', message: 'The game is busy - try again shortly.' });
     }
 
     pendingActions.push({
@@ -771,7 +807,7 @@ app.post('/api/queue-action', (req, res) => {
 // risk of the same action being picked up twice if a separate "ack" call ever failed partway.
 app.get('/api/pending-actions', (req, res) => {
     const providedSecret = req.headers['x-push-secret'];
-    if (providedSecret !== PUSH_SECRET) {
+    if (!secretOk(providedSecret, PUSH_SECRET)) {
         return res.status(401).json({ error: 'Invalid push secret' });
     }
 
@@ -779,6 +815,30 @@ app.get('/api/pending-actions', (req, res) => {
     pendingActions = [];
 
     res.json({ actions: actions });
+});
+
+// ============================
+// CRIME BOARD - the players' shared investigation board. Everything lives in crimeboard.js;
+// see the comment at the top of that file for the routes, access rules and storage.
+// ============================
+require('./crimeboard')(app, {
+    resolveIdentity,
+    getPerp: id => store[id],
+    // GM's "Show on stream" queues a crimeBoardShow action for Process Panel Actions to pick up.
+    queueAction: (userId, type, payload) => {
+        if (pendingActions.length >= MAX_PENDING_ACTIONS) return;
+        pendingActions.push({ id: nextActionId++, userId, type, payload: payload || {}, queuedAt: new Date().toISOString() });
+    },
+    PUSH_SECRET,
+    EXT_SECRET
+});
+
+// Errors (bad JSON, oversized bodies, anything unexpected) answer with a short JSON message instead
+// of Express's default page, which can include a stack trace. Added 2026-10-30.
+app.use((err, req, res, next) => {
+    const status = err.status || err.statusCode || 500;
+    if (status >= 500) console.error(err);
+    res.status(status).json({ error: status === 413 ? 'too_large' : status < 500 ? 'bad_request' : 'server_error' });
 });
 
 app.listen(PORT, () => {
