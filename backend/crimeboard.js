@@ -4,8 +4,20 @@
 // Mounted from server.js with:
 //     require('./crimeboard')(app, { resolveIdentity, getPerp, queueAction, PUSH_SECRET, EXT_SECRET });
 //
+// TWO BOARDS (2026-11-01)
+//   This file runs two separate boards with the same code:
+//     Crime Board            /api/crimeboard    the Judges' board (blue), saved under crimeboard/
+//     Crime Board (Perps)    /api/blockmarket   the Perps' own board (dark red), saved under blockmarket/
+//                            (shown to players as "Crime Board" too; "blockmarket" is just its old name)
+//   Each has its own cards, teams, scenarios and players; neither side can see the other's board.
+//   They share one M.A.C. list (people/places/items), which Streamer.bot pushes to
+//   /api/crimeboard/catalog and is saved as crimeboard/catalog.json. The broadcaster is GM on both.
+//
 // WHO CAN USE IT
-//   Players: a Judges-group member, or anyone with a Judge or Perp character assigned
+//   Crime Board: a Judges-group member or anyone with a Judge character assigned.
+//   Perps' Crime Board: anyone with a Perp character assigned.
+//   (The rest of this header describes either board; "crimeboard" paths have "blockmarket" twins.)
+//   Players: as above
 //   (assignedJudgeName/assignedPerpName, pushed by Sync To Extension). Once someone has opened the
 //   board they stay registered, so access survives between sessions. The GM can remove a player,
 //   which also stops them re-registering until the GM lets them back in.
@@ -60,16 +72,45 @@ const CARD_TYPES = ['Person', 'Robot', 'Location', 'Evidence', 'Group', 'Crime',
 const KIND_TYPE = { person: 'Person', robot: 'Robot', place: 'Location', item: 'Evidence' };
 const IMG_BASE = process.env.CRIMEBOARD_IMG_BASE || 'https://grumpybattersby.github.io/big-heist-extension';
 const IMG_FOLDER = { person: 'people', robot: 'people', place: 'places', item: 'mac-items' };
-const DEFAULT_TEAMS = [
-    { name: 'Gold Judge Team', color: '#c97400', members: [] },
-    { name: 'Green Judge Team', color: '#0f9a49', members: [] },
-    { name: 'Red Perp Team', color: '#d42a2a', members: ['Quin', 'Flink'] }
-];
+
+// The two boards. Everything that differs between them lives here.
+const BOARDS = {
+    crime: {
+        key: 'crime', name: 'Crime Board', base: '/api/crimeboard', dir: 'crimeboard',
+        boardFile: './crimeboard-store.json', ownsCatalog: true, showAction: 'crimeBoardShow',
+        teams: [
+            { name: 'Gold Judge Team', color: '#c97400', members: [] },
+            { name: 'Green Judge Team', color: '#0f9a49', members: [] }
+        ],
+        v1Codes: ['GOLD', 'GREEN'],
+        character: p => p.assignedJudgeName,
+        eligible: p => !!(p.assignedJudgeName || p.isWatchingJudge),
+        // Perps were on this board until 2026-11-01; anyone who is now only a Perp is kept out.
+        excluded: p => !!(p.assignedPerpName && !p.assignedJudgeName && !p.isWatchingJudge),
+        notPlayer: 'The Crime Board is for the Judges playing in the RPG.'
+    },
+    market: {
+        key: 'market', name: 'Crime Board', log: 'Crime Board (Perps)', base: '/api/blockmarket', dir: 'blockmarket',
+        boardFile: './blockmarket-store.json', ownsCatalog: false, showAction: 'blockMarketShow',
+        teams: [
+            { name: 'Red Perp Team', color: '#d42a2a', members: ['Quin', 'Flink'] }
+        ],
+        v1Codes: [],
+        // With only one crew on the Perps' board, every Perp is on it without the GM listing them.
+        soloTeam: true,
+        character: p => p.assignedPerpName,
+        eligible: p => !!p.assignedPerpName,
+        excluded: p => !p.assignedPerpName && !!(p.assignedJudgeName || p.isWatchingJudge),
+        notPlayer: 'This Crime Board is for the Perps playing in the RPG.'
+    }
+};
+
+// The M.A.C. list both boards draw from. The Crime Board loads, saves and receives it.
+const shared = { catalog: { version: 0, updatedAt: null, records: [] }, recIndex: new Map(), boards: [] };
 
 const LIMITS = { name: 60, details: 3000, note: 1500, label: 40, caseName: 60, teamName: 40, member: 60, members: 40, teams: 12,
     cases: 40, img: 220000, items: 800, links: 2000, notes: 5000, events: 30, players: 200 };
 
-const BOARD_FILE = './crimeboard-store.json';
 const CATALOG_FILE = './crimeboard-catalog.json';
 const GH = {
     token: process.env.GITHUB_TOKEN || '',
@@ -103,31 +144,38 @@ function cleanImg(v) {
     return ok ? v : undefined;
 }
 
-function emptyBoard() {
+function emptyBoard(cfg) {
     const b = {
-        v: 2, rev: 1,
+        v: 2, rev: 1, perpsMoved: true,
         cases: [{ id: 'c1', name: 'First scenario' }],
         teams: [], retiredTeams: {},
         players: {}, blocked: {},
         items: [], links: [], notes: [], events: [],
         obsFocus: { seq: 0, kind: 'all', id: null, label: 'Whole board' }
     };
-    DEFAULT_TEAMS.forEach(t => b.teams.push(Object.assign({ id: newId('t'), caseId: 'c1' }, JSON.parse(JSON.stringify(t)))));
+    cfg.teams.forEach(t => b.teams.push(Object.assign({ id: newId('t'), caseId: 'c1' }, JSON.parse(JSON.stringify(t)))));
     return b;
 }
 
 // Fills in anything missing (older saves, hand-edited backups) so the rest of the code can rely on it.
-function normalize(b) {
-    if (!b || typeof b !== 'object') return emptyBoard();
-    const out = Object.assign(emptyBoard(), b);
+function normalize(b, cfg) {
+    if (!b || typeof b !== 'object') return emptyBoard(cfg);
+    const out = Object.assign(emptyBoard(cfg), b);
     ['items', 'links', 'notes', 'events', 'cases'].forEach(k => { if (!Array.isArray(out[k])) out[k] = []; });
     if (!out.cases.length) out.cases = [{ id: 'c1', name: 'First scenario' }];
     ['players', 'blocked', 'retiredTeams'].forEach(k => { if (!out[k] || typeof out[k] !== 'object' || Array.isArray(out[k])) out[k] = {}; });
     if (!Array.isArray(b.teams)) {
         // v1 boards kept teams as { GOLD: caseId, ... } - turn them into full teams.
         const old = (b.teams && typeof b.teams === 'object') ? b.teams : {};
-        const codes = ['GOLD', 'GREEN', 'RED'];
-        out.teams = DEFAULT_TEAMS.map((t, i) => Object.assign({ id: codes[i], caseId: old[codes[i]] || out.cases[0].id }, JSON.parse(JSON.stringify(t))));
+        const codes = cfg.v1Codes;
+        out.teams = cfg.teams.map((t, i) => Object.assign({ id: codes[i] || newId('t'), caseId: old[codes[i]] || out.cases[0].id }, JSON.parse(JSON.stringify(t))));
+    }
+    // 2026-11-01: the Perps got their own board, so the Crime Board's Perp team is retired once.
+    // Anything it pinned keeps its name and colour.
+    if (cfg.key === 'crime' && !b.perpsMoved) {
+        out.teams.filter(t => /perp/i.test(t.name) || t.id === 'RED').forEach(t => { out.retiredTeams[t.id] = { name: t.name, color: t.color }; });
+        out.teams = out.teams.filter(t => !(/perp/i.test(t.name) || t.id === 'RED'));
+        out.perpsMoved = true;
     }
     out.teams.forEach(t => { if (!Array.isArray(t.members)) t.members = []; if (!isColor(t.color)) t.color = '#8a93a6'; });
     if (!out.obsFocus) out.obsFocus = { seq: 0, kind: 'all', id: null, label: 'Whole board' };
@@ -170,30 +218,36 @@ function buildCatalog(people, places, items) {
 
 // ---------- module ----------
 
-module.exports = function mountCrimeBoard(app, deps) {
+module.exports = function mountBoards(app, deps) {
+    mountBoard(app, deps, BOARDS.crime);
+    mountBoard(app, deps, BOARDS.market);
+};
+
+function mountBoard(app, deps, cfg) {
     const { resolveIdentity, getPerp, queueAction, PUSH_SECRET, EXT_SECRET } = deps;
+    const NAME = cfg.name, LOG = cfg.log || cfg.name, BASE = cfg.base, DIR = cfg.dir, BOARD_FILE = cfg.boardFile;
 
     let board = null;
-    let catalog = { version: 0, updatedAt: null, records: [] };
-    let recIndex = new Map();
     let loadState = 'loading';           // loading | ready | failed
     let ghBoardSha = null, ghCatalogSha = null;
     let lastSnapshotDay = null, lastSavedAt = null, freshEmpty = false;
     let loggedChannel = false;
 
-    const reindex = () => { recIndex = new Map(catalog.records.map(r => [r.key, r])); };
+    const reindex = () => { shared.recIndex = new Map(shared.catalog.records.map(r => [r.key, r])); };
 
-    if (!CHANNEL_ID) console.warn('Crime Board: TWITCH_CHANNEL_ID not set - any channel\'s broadcaster role would count as GM. Set it.');
-    if (!GH.token) console.warn('Crime Board: GITHUB_TOKEN not set - the board is only kept until Render restarts.');
+    if (cfg.ownsCatalog) {
+        if (!CHANNEL_ID) console.warn('Crime Board: TWITCH_CHANNEL_ID not set - any channel\'s broadcaster role would count as GM. Set it.');
+        if (!GH.token) console.warn('Crime Board: GITHUB_TOKEN not set - the boards are only kept until Render restarts.');
+    }
 
     // ---------- persistence ----------
 
     function readLocal(file) {
-        try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { console.warn('Crime Board: could not read ' + file + ': ' + e.message); }
+        try { if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { console.warn(LOG + ': could not read ' + file + ': ' + e.message); }
         return null;
     }
     function writeLocal(file, data) {
-        try { fs.writeFileSync(file, JSON.stringify(data), 'utf8'); } catch (e) { console.warn('Crime Board: could not write ' + file + ': ' + e.message); }
+        try { fs.writeFileSync(file, JSON.stringify(data), 'utf8'); } catch (e) { console.warn(LOG + ': could not write ' + file + ': ' + e.message); }
     }
 
     function gh(path, opts) {
@@ -248,34 +302,33 @@ module.exports = function mountCrimeBoard(app, deps) {
     async function load() {
         if (GH.token) {
             try {
-                const [b, c] = await Promise.all([ghRead('crimeboard/board.json'), ghRead('crimeboard/catalog.json')]);
-                if (b) { board = normalize(b.data); ghBoardSha = b.sha; }
-                else { const local = readLocal(BOARD_FILE); board = local ? normalize(local) : emptyBoard(); freshEmpty = !local; }
-                if (c) { catalog = c.data; ghCatalogSha = c.sha; } else catalog = readLocal(CATALOG_FILE) || catalog;
+                const [b, c] = await Promise.all([ghRead(DIR + '/board.json'), cfg.ownsCatalog ? ghRead('crimeboard/catalog.json') : null]);
+                if (b) { board = normalize(b.data, cfg); ghBoardSha = b.sha; }
+                else { const local = readLocal(BOARD_FILE); board = local ? normalize(local, cfg) : emptyBoard(cfg); freshEmpty = !local; }
+                if (cfg.ownsCatalog) { if (c) { shared.catalog = c.data; ghCatalogSha = c.sha; } else shared.catalog = readLocal(CATALOG_FILE) || shared.catalog; }
                 loadState = 'ready';
-                console.log('Crime Board: loaded from GitHub (' + board.items.length + ' cards, ' + catalog.records.length + ' M.A.C. records)');
+                console.log(LOG + ': loaded from GitHub (' + board.items.length + ' cards, ' + shared.catalog.records.length + ' M.A.C. records)');
             } catch (e) {
                 // Never fall back to an empty board here: saving it would overwrite the real one on GitHub.
                 loadState = 'failed';
-                console.warn('Crime Board: GitHub load failed, retrying in 30s - ' + e.message);
+                console.warn(LOG + ': GitHub load failed, retrying in 30s - ' + e.message);
                 setTimeout(load, 30000);
                 return;
             }
         } else {
             const local = readLocal(BOARD_FILE);
-            board = local ? normalize(local) : emptyBoard();
+            board = local ? normalize(local, cfg) : emptyBoard(cfg);
             freshEmpty = !local;
-            catalog = readLocal(CATALOG_FILE) || catalog;
+            if (cfg.ownsCatalog) shared.catalog = readLocal(CATALOG_FILE) || shared.catalog;
             loadState = 'ready';
         }
-        reindex();
-        syncLeads();
+        if (cfg.ownsCatalog) { reindex(); shared.boards.forEach(x => x.syncLeads()); } else syncLeads();
     }
 
     // Saves are batched: at most one GitHub write per 15 seconds, always of the latest board.
     let saveTimer = null, saving = false, dirtyBoard = false, dirtyCatalog = false;
     function scheduleSave(what) {
-        if (what === 'catalog') { dirtyCatalog = true; writeLocal(CATALOG_FILE, catalog); }
+        if (what === 'catalog') { dirtyCatalog = true; writeLocal(CATALOG_FILE, shared.catalog); }
         else { dirtyBoard = true; writeLocal(BOARD_FILE, board); }
         if (!GH.token || saveTimer) return;
         saveTimer = setTimeout(flush, 15000);
@@ -288,19 +341,19 @@ module.exports = function mountCrimeBoard(app, deps) {
             if (dirtyBoard) {
                 dirtyBoard = false;
                 const snap = JSON.parse(JSON.stringify(board));
-                ghBoardSha = await ghWrite('crimeboard/board.json', snap, ghBoardSha, 'Crime Board save (rev ' + snap.rev + ')');
+                ghBoardSha = await ghWrite(DIR + '/board.json', snap, ghBoardSha, LOG + ' save (rev ' + snap.rev + ')');
                 lastSavedAt = new Date().toISOString();
                 if (lastSnapshotDay !== today()) {
                     // One dated copy per day, never overwritten.
                     const day = today();
-                    const existing = await ghRead('crimeboard/backups/board-' + day + '.json').catch(() => null);
-                    if (!existing) await ghWrite('crimeboard/backups/board-' + day + '.json', snap, null, 'Crime Board daily backup ' + day);
+                    const existing = await ghRead(DIR + '/backups/board-' + day + '.json').catch(() => null);
+                    if (!existing) await ghWrite(DIR + '/backups/board-' + day + '.json', snap, null, LOG + ' daily backup ' + day);
                     lastSnapshotDay = day;
                 }
             }
-            if (dirtyCatalog) { dirtyCatalog = false; ghCatalogSha = await ghWrite('crimeboard/catalog.json', catalog, ghCatalogSha, 'M.A.C. catalog v' + catalog.version); }
+            if (dirtyCatalog) { dirtyCatalog = false; ghCatalogSha = await ghWrite('crimeboard/catalog.json', shared.catalog, ghCatalogSha, 'M.A.C. catalog v' + shared.catalog.version); }
         } catch (e) {
-            console.warn('Crime Board: GitHub save failed, will retry - ' + e.message);
+            console.warn(LOG + ': GitHub save failed, will retry - ' + e.message);
             dirtyBoard = true;
             saveTimer = setTimeout(flush, 30000);
         } finally { saving = false; }
@@ -315,6 +368,7 @@ module.exports = function mountCrimeBoard(app, deps) {
 
     function syncLeads() {
         if (!board) return;
+        const recIndex = shared.recIndex;
         const linked = [];
         board.items.forEach(i => {
             if (i.src !== 'pending') return;
@@ -338,6 +392,7 @@ module.exports = function mountCrimeBoard(app, deps) {
     function teamOf(p) {
         const keys = [p.character, p.name].filter(Boolean).map(nameKey);
         const t = board.teams.find(t => t.members.some(m => keys.includes(nameKey(m))));
+        if (!t && cfg.soloTeam && board.teams.length === 1) return board.teams[0].id;
         return t ? t.id : null;
     }
 
@@ -355,13 +410,18 @@ module.exports = function mountCrimeBoard(app, deps) {
         const isBroadcaster = !!(decoded && decoded.role === 'broadcaster' && (!CHANNEL_ID || String(decoded.channel_id) === CHANNEL_ID));
         if (decoded && decoded.role === 'broadcaster' && !CHANNEL_ID && !loggedChannel) {
             loggedChannel = true;
-            console.log('Crime Board: the broadcaster opened the board from channel ' + decoded.channel_id + ' - set TWITCH_CHANNEL_ID=' + decoded.channel_id + ' on Render.');
+            console.log(LOG + ': the broadcaster opened the board from channel ' + decoded.channel_id + ' - set TWITCH_CHANNEL_ID=' + decoded.channel_id + ' on Render.');
         }
         const isGM = isBroadcaster || GM_IDS.includes(userId);
         if (board.blocked[userId] && !isGM) return { userId, isGM: false, player: null, blocked: true };
         const perp = getPerp(userId) || null;
-        const character = perp ? clip(perp.assignedJudgeName || perp.assignedPerpName || '', LIMITS.member) || null : null;
-        const eligible = !!(perp && (perp.assignedJudgeName || perp.assignedPerpName || perp.isWatchingJudge));
+        const character = perp ? clip(cfg.character(perp) || '', LIMITS.member) || null : null;
+        const eligible = !!(perp && cfg.eligible(perp));
+        // Someone who now belongs on the other board is kept off this one (and dropped from its list).
+        if (perp && !isGM && cfg.excluded(perp)) {
+            if (board.players[userId]) { delete board.players[userId]; changed(); }
+            return { userId, isGM: false, player: null };
+        }
         let player = board.players[userId];
         if (!player && eligible && Object.keys(board.players).length < LIMITS.players) {
             player = board.players[userId] = { name: clip(perp.name, LIMITS.member) || 'Player', character, since: Date.now() };
@@ -381,8 +441,8 @@ module.exports = function mountCrimeBoard(app, deps) {
             const status = id.error === 'identity_not_shared' || id.error === 'invalid_session' ? 403 : 401;
             return res.status(status).json({ error: id.error, message: id.message });
         }
-        if (id.blocked) return res.status(403).json({ error: 'not_a_player', message: 'The GM has removed you from the Crime Board.' });
-        return res.status(403).json({ error: 'not_a_player', message: 'The Crime Board is for the players in the RPG.' });
+        if (id.blocked) return res.status(403).json({ error: 'not_a_player', message: 'The GM has removed you from the ' + NAME + '.' });
+        return res.status(403).json({ error: 'not_a_player', message: cfg.notPlayer });
     }
 
     // What the panel sees. Player IDs and the blocked list stay on the server.
@@ -422,48 +482,49 @@ module.exports = function mountCrimeBoard(app, deps) {
     // ---------- guards ----------
 
     const ipKey = req => req.ip;
-    const viewerLimit = rateLimit({ name: 'cb-get', max: 40, windowMs: 10000, key: ipKey });
-    const opLimit = rateLimit({ name: 'cb-op', max: 60, windowMs: 10000, key: ipKey });
+    const viewerLimit = rateLimit({ name: cfg.key + '-get', max: 40, windowMs: 10000, key: ipKey });
+    const opLimit = rateLimit({ name: cfg.key + '-op', max: 60, windowMs: 10000, key: ipKey });
     const userOver = counter({ max: 25, windowMs: 10000 });
-    const obsLimit = rateLimit({ name: 'cb-obs', max: 30, windowMs: 10000, key: ipKey });
+    const obsLimit = rateLimit({ name: cfg.key + '-obs', max: 30, windowMs: 10000, key: ipKey });
     const pushOnly = (req, res, next) => secretOk(req.headers['x-push-secret'], PUSH_SECRET) ? next() : res.status(401).json({ error: 'Invalid push secret' });
-    // Bodies are parsed here (server.js skips /api/crimeboard), with a size cap per route.
+    // Bodies are parsed here (server.js skips /api/crimeboard and /api/blockmarket), with a size cap per route.
     const smallJson = express.json({ limit: '300kb' });
     const bigJson = express.json({ limit: '3mb' });
-    const ready = (req, res, next) => loadState === 'ready' ? next() : res.status(503).json({ error: 'loading', message: 'The Crime Board is starting up. Trying again shortly.' });
+    const ready = (req, res, next) => loadState === 'ready' ? next() : res.status(503).json({ error: 'loading', message: 'The ' + NAME + ' is starting up. Trying again shortly.' });
 
     // ---------- Streamer.bot routes (push secret) ----------
 
-    app.post('/api/crimeboard/catalog', pushOnly, bigJson, ready, (req, res) => {
+    // One M.A.C. list for both boards, so only the Crime Board takes the push.
+    if (cfg.ownsCatalog) app.post('/api/crimeboard/catalog', pushOnly, bigJson, ready, (req, res) => {
         const { people, places, items } = req.body || {};
         const records = buildCatalog(people, places, items);
         if (!records.length) return res.status(400).json({ error: 'No active people, places or items found in that push.' });
         const sig = crypto.createHash('sha1').update(JSON.stringify(records)).digest('hex');
-        if (sig !== catalog.sig) {
-            catalog = { version: (catalog.version || 0) + 1, sig, updatedAt: new Date().toISOString(), records };
+        if (sig !== shared.catalog.sig) {
+            shared.catalog = { version: (shared.catalog.version || 0) + 1, sig, updatedAt: new Date().toISOString(), records };
             reindex();
             scheduleSave('catalog');
-            syncLeads();
+            shared.boards.forEach(x => x.syncLeads());
         }
-        res.json({ success: true, records: records.length, version: catalog.version });
+        res.json({ success: true, records: records.length, version: shared.catalog.version });
     });
 
     // The whole board including private parts, for the PC backup copy.
-    app.get('/api/crimeboard/backup', pushOnly, ready, (req, res) => {
+    app.get(BASE + '/backup', pushOnly, ready, (req, res) => {
         res.set('Cache-Control', 'no-store');
         res.json({ persistent: !!GH.token, freshEmpty, rev: board.rev, items: board.items.length, savedAt: new Date().toISOString(), board });
     });
 
     // Puts a backup back. The board being replaced is saved to GitHub's backups folder first.
-    app.post('/api/crimeboard/restore', pushOnly, bigJson, ready, async (req, res) => {
+    app.post(BASE + '/restore', pushOnly, bigJson, ready, async (req, res) => {
         const incoming = req.body && req.body.board;
-        if (!incoming || !Array.isArray(incoming.items) || !Array.isArray(incoming.cases)) return res.status(400).json({ error: 'That file doesn\'t look like a Crime Board backup.' });
+        if (!incoming || !Array.isArray(incoming.items) || !Array.isArray(incoming.cases)) return res.status(400).json({ error: 'That file doesn\'t look like a ' + NAME + ' backup.' });
         if (GH.token) {
-            try { await ghWrite('crimeboard/backups/before-restore-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json', board, null, 'Crime Board: copy of the board replaced by a restore'); }
+            try { await ghWrite(DIR + '/backups/before-restore-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json', board, null, LOG + ': copy of the board replaced by a restore'); }
             catch (e) { return res.status(502).json({ error: 'Couldn\'t save a copy of the current board to GitHub first, so nothing was restored. ' + e.message }); }
         }
         const rev = board.rev;
-        board = normalize(incoming);
+        board = normalize(incoming, cfg);
         board.rev = Math.max(rev, board.rev || 0);
         event('The GM restored the board from a backup.');
         changed();
@@ -472,7 +533,7 @@ module.exports = function mountCrimeBoard(app, deps) {
     });
 
     // What the OBS view zooms to: target = "all", "team:Gold", "case:<scenario>", "card:<card name>".
-    app.post('/api/crimeboard/obs-focus', pushOnly, smallJson, ready, (req, res) => {
+    app.post(BASE + '/obs-focus', pushOnly, smallJson, ready, (req, res) => {
         const f = resolveFocus(req.body && req.body.target);
         if (!f) return res.status(404).json({ error: 'Nothing on the board matches ' + clip(req.body && req.body.target, 80) });
         setFocus(f.kind, f.id, f.label);
@@ -482,18 +543,18 @@ module.exports = function mountCrimeBoard(app, deps) {
 
     // ---------- OBS browser source (key in the URL) ----------
 
-    app.get('/api/crimeboard/obs', obsLimit, ready, (req, res) => {
+    app.get(BASE + '/obs', obsLimit, ready, (req, res) => {
         res.set('Cache-Control', 'no-store');
         if (!OBS_KEY || !secretOk(String(req.query.key || ''), OBS_KEY)) return res.status(401).json({ error: 'bad_key', message: 'Check the key in the OBS browser source URL.' });
-        const out = { rev: board.rev, cat: catalog.version, focus: board.obsFocus };
+        const out = { rev: board.rev, cat: shared.catalog.version, focus: board.obsFocus };
         if (String(req.query.rev) !== String(board.rev)) out.board = publicBoard();
-        if (String(req.query.cat) !== String(catalog.version)) out.catalog = catalog.records;
+        if (String(req.query.cat) !== String(shared.catalog.version)) out.catalog = shared.catalog.records;
         res.json(out);
     });
 
     // ---------- panel routes (Twitch JWT / YouTube session) ----------
 
-    app.get('/api/crimeboard', viewerLimit, ready, (req, res) => {
+    app.get(BASE, viewerLimit, ready, (req, res) => {
         res.set('Cache-Control', 'no-store');
         const id = whoIs(req);
         if (id.error || !id.player) return deny(res, id);
@@ -502,15 +563,15 @@ module.exports = function mountCrimeBoard(app, deps) {
             me: { name: displayName(id.player), team: id.team, teamName: team ? team.name : null, isGM: id.isGM },
             types: CARD_TYPES,
             rev: board.rev,
-            cat: catalog.version
+            cat: shared.catalog.version
         };
         if (String(req.query.rev) !== String(board.rev)) out.board = publicBoard();
-        if (String(req.query.cat) !== String(catalog.version)) out.catalog = catalog.records;
+        if (String(req.query.cat) !== String(shared.catalog.version)) out.catalog = shared.catalog.records;
         if (id.isGM) out.gm = gmView();
         res.json(out);
     });
 
-    app.post('/api/crimeboard/op', opLimit, smallJson, ready, (req, res) => {
+    app.post(BASE + '/op', opLimit, smallJson, ready, (req, res) => {
         res.set('Cache-Control', 'no-store');
         const id = whoIs(req);
         if (id.error || !id.player) return deny(res, id);
@@ -521,6 +582,7 @@ module.exports = function mountCrimeBoard(app, deps) {
         const op = String(b.op || '');
         const fail = (msg, code) => res.status(code || 400).json({ error: 'rejected', message: msg });
         const item = iid => board.items.find(i => i.id === iid);
+        const recIndex = shared.recIndex;
         const caseExists = cid => board.cases.some(c => c.id === cid);
         const teamLabel = tid => (teamById(tid) || board.retiredTeams[tid] || { name: tid === 'GM' ? 'GM' : 'that team' }).name;
         if (!team && !op.startsWith('gm')) return fail('The GM needs to put you on a team first.');
@@ -559,10 +621,9 @@ module.exports = function mountCrimeBoard(app, deps) {
                 if (!i) return fail('That card has gone.');
                 if (i.src === 'record') return fail('Case files are kept up to date by the GM.');
                 const name = clip(b.name, LIMITS.name);
-                if (name) {
-                    if (i.src === 'pending' && recIndex.has(nameKey(name))) return fail(name + ' is already in M.A.C.');
-                    i.name = name;
-                }
+                // Renaming a new lead to a name that IS in M.A.C. (fixing a typo) turns it into that
+                // case file straight away (syncLeads below), keeping its arrows and notes.
+                if (name) i.name = name;
                 if (typeof b.details === 'string') i.details = clip(b.details, LIMITS.details);
                 if (i.src === 'player') {
                     if (CARD_TYPES.includes(b.type)) i.type = b.type;
@@ -701,15 +762,16 @@ module.exports = function mountCrimeBoard(app, deps) {
                 if (!f) return 'Nothing on the board matches that.';
                 setFocus(f.kind, f.id, f.label);
                 // Lets Streamer.bot switch OBS to the board too (see the Process Panel Actions snippet).
-                if (b.switchScene && queueAction) queueAction(id.userId, 'crimeBoardShow', { target: String(b.target || 'all').slice(0, 120) });
+                if (b.switchScene && queueAction) queueAction(id.userId, cfg.showAction, { target: String(b.target || 'all').slice(0, 120), board: cfg.key });
                 return;
             }
             default: return 'Unknown change.';
         }
     }
 
+    shared.boards.push({ syncLeads });
     load();
-};
+}
 
 module.exports.buildCatalog = buildCatalog;
 module.exports.nameKey = nameKey;

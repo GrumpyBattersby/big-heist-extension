@@ -34,10 +34,10 @@ const app = express();
 // Render sits behind one proxy; this makes req.ip the viewer's real IP for the rate limits below.
 app.set('trust proxy', 1);
 app.use(cors());
-// JSON bodies are capped at Express's 100kb default everywhere except the Crime Board routes,
-// which parse their own bodies with their own per-route limits (see crimeboard.js).
+// JSON bodies are capped at Express's 100kb default everywhere except the Crime Board and Block
+// Market routes, which parse their own bodies with their own per-route limits (see crimeboard.js).
 const parseJson = express.json();
-app.use((req, res, next) => req.path.startsWith('/api/crimeboard') ? next() : parseJson(req, res, next));
+app.use((req, res, next) => (req.path.startsWith('/api/crimeboard') || req.path.startsWith('/api/blockmarket')) ? next() : parseJson(req, res, next));
 
 // Rate limits for the routes any viewer can call (added 2026-10-30). Viewers can read and edit
 // the panel's code in their own browser, so the server is what has to stop floods.
@@ -818,8 +818,9 @@ app.get('/api/pending-actions', (req, res) => {
 });
 
 // ============================
-// CRIME BOARD - the players' shared investigation board. Everything lives in crimeboard.js;
-// see the comment at the top of that file for the routes, access rules and storage.
+// CRIME BOARD (Judges) and MEGA-CITY BLOCK MARKET (Perps) - the players' investigation boards.
+// Both live in crimeboard.js; see the comment at the top of that file for the routes, access
+// rules and storage.
 // ============================
 require('./crimeboard')(app, {
     resolveIdentity,
