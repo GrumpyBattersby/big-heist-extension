@@ -903,6 +903,16 @@
   // ---------- PANEL (318px list) ----------
   let pView = null; // item id, 'add', 'gm' or null
   let pAddSrc = 'record', pAddCase = null;
+
+  // The scenario picked when you last added a card is picked again next time (per board, remembered
+  // in this browser). Falls back to your team's scenario if that one has since been deleted.
+  const lastCaseKey = () => 'cbLastCase:' + B.key;
+  function lastCase() {
+    let id = null;
+    try { id = localStorage.getItem(lastCaseKey()); } catch (e) { /* storage blocked - fine */ }
+    return id && state.cases.some(c => c.id === id) ? id : myScenario();
+  }
+  function rememberCase(id) { try { localStorage.setItem(lastCaseKey(), id); } catch (e) { /* storage blocked - fine */ } }
   function wirePanel() {
     $('pSearch').oninput = () => { pView = null; renderPanel(); };
     $('pAdd').onclick = () => { pView = 'add'; renderPanel(); };
@@ -956,7 +966,7 @@
            <select class="field" id="pType" aria-label="Card type">${CARD_TYPES.map(t => `<option${t === 'Evidence' ? ' selected' : ''}>${t}</option>`).join('')}</select>
            <textarea class="field" id="pDetails" placeholder="What is it? Where was it found? Any player can edit this later."></textarea>
            <label class="picfield" for="pImg"><span class="kicker">Picture (optional)</span><input type="file" id="pImg" accept="image/*"></label>`}
-      <label class="picfield" for="pCase"><span class="kicker">Scenario</span><select class="field" id="pCase">${scenarioOptions(pAddCase || myScenario())}</select></label>
+      <label class="picfield" for="pCase"><span class="kicker">Scenario</span><select class="field" id="pCase">${scenarioOptions(pAddCase || lastCase())}</select></label>
       <textarea class="field" id="pNote" placeholder="Your team's first note (optional)"></textarea>
       <button class="btn primary" style="justify-self:end">Add to board</button>
     </form>`;
@@ -982,7 +992,7 @@
       }
       if (document.activeElement) document.activeElement.blur();
       const id = await createCard(card);
-      if (id) { pView = id; pAddCase = null; renderPanel(); $('pBody').scrollTop = 0; }
+      if (id) { rememberCase(caseId); pView = id; pAddCase = null; renderPanel(); $('pBody').scrollTop = 0; }
     };
   }
   function renderPanelDetail(i) {
@@ -1367,7 +1377,7 @@
       if (!pinForm.hidden) {
         pinForm.reset();
         pinType.innerHTML = CARD_TYPES.map(t => `<option${t === 'Evidence' ? ' selected' : ''}>${t}</option>`).join('');
-        pinCase.innerHTML = scenarioOptions(myScenario());
+        pinCase.innerHTML = scenarioOptions(lastCase());
         pinCombo.reset(); setPinSrc('record');
         pinCombo.focus();
       }
@@ -1389,7 +1399,7 @@
       }
       if (document.activeElement) document.activeElement.blur();
       const id = await createCard(card);
-      if (id) { pinForm.hidden = true; showNewCard(id); }
+      if (id) { rememberCase(caseId); pinForm.hidden = true; showNewCard(id); }
     };
 
     if (!keysWired) document.addEventListener('keydown', e => {
