@@ -709,9 +709,13 @@
       </div>`).join('');
     const cases = state.cases.map(c => {
       const used = state.items.filter(i => i.caseId === c.id).length;
-      return `<form class="gm-row three" data-rename="${c.id}"><input class="field" value="${esc(c.name)}" maxlength="60" aria-label="Scenario name">
-        <span class="kicker">${used} card${used === 1 ? '' : 's'}</span>
-        <span style="display:flex;gap:4px;flex-wrap:wrap"><button class="btn small">Rename</button><button type="button" class="btn small" data-show="case:${c.id}">Show</button>${used ? '' : `<button type="button" class="btn small danger" data-delcase="${c.id}">Delete</button>`}</span></form>`;
+      // Each scenario is its own box: the name on a full-width line (so you can see which one
+      // you're editing), then how many cards it has, who's investigating it, and its buttons.
+      const on = (state.teams || []).filter(t => t.caseId === c.id);
+      return `<form class="gm-case" data-rename="${c.id}" style="--tc:${on[0] ? on[0].color : '#66fbfd'}">
+        <input class="field" value="${esc(c.name)}" maxlength="60" aria-label="Scenario name">
+        <span class="kicker">${used} card${used === 1 ? '' : 's'} · ${on.length ? on.map(t => teamWord(t.id)).join(', ') : 'no team on it'}</span>
+        <span class="card-tools"><button class="btn small">Rename</button><button type="button" class="btn small" data-show="case:${c.id}">Show on stream</button>${used ? '' : `<button type="button" class="btn small danger" data-delcase="${c.id}">Delete</button>`}</span></form>`;
     }).join('');
     const players = gm.players.length ? gm.players.map(p => `<div class="gm-row three"><span class="who"><b>${esc(p.character || p.name)}</b><small>${esc(p.name)} · ${p.team ? teamWord(p.team) : 'no team'}</small></span>
         <select class="field" data-moveplayer="${esc(memberValue(p))}" aria-label="Team for ${esc(memberValue(p))}"><option value="">No team</option>${(state.teams || []).map(t => `<option value="${t.id}"${p.team === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
@@ -882,8 +886,11 @@
       const teams = (state.teams || []).filter(t => t.caseId === c.id);
       const c1 = teams[0] ? teams[0].color : '#66fbfd', c2 = teams[1] ? teams[1].color : c1;
       const who = teams.map(t => t.name.toUpperCase()).join('  ·  ');
-      els.push({ group: 'nodes', data: { id: c.id, label: c.name.toUpperCase() + (who ? '\n' + who : ''), isCase: 1,
+      els.push({ group: 'nodes', data: { id: c.id, label: c.name.toUpperCase(), isCase: 1,
         tc: c1, tc2: c2, ow: teams.length > 1 ? 3 : 0, bw: teams.length ? 3 : 1 } });
+      // Who's investigating goes on its own small line just inside the top of the box (a canvas
+      // label is one size, so it's a separate little marker that follows the box around).
+      if (who) els.push({ group: 'nodes', data: { id: 'tag:' + c.id, label: who, isTag: 1, of: c.id, tc: c1 } });
     });
     state.items.forEach(i => els.push({ group: 'nodes',
       data: { id: i.id, label: i.name, parent: i.caseId, color: TYPES[typeOf(i.type)].color, frame: holoFrame(TYPES[typeOf(i.type)].color), img: imgFor(i), tall: isTall(i.type) ? 1 : 0, lead: i.src === 'pending' ? 1 : 0 },
@@ -944,6 +951,12 @@
           'text-background-color': '#03182e', 'text-background-opacity': 0.82, 'text-background-padding': 10, 'text-background-shape': 'round-rectangle',
           'text-border-width': 2, 'text-border-color': 'data(tc)', 'text-border-opacity': 1,
           'text-wrap': 'wrap', 'text-max-width': 2000, 'padding': 44 } },
+        { selector: 'node[?isTag]', style: {
+          'width': 1, 'height': 1, 'background-opacity': 0, 'background-image': 'none', 'border-width': 0, 'outline-width': 0, 'underlay-opacity': 0,
+          'events': 'no', 'label': 'data(label)', 'text-valign': 'center', 'text-halign': 'center', 'text-margin-y': 0,
+          'font-family': 'Share Tech Mono, monospace', 'font-size': 15, 'font-weight': 400, 'color': '#d8fdff', 'text-transform': 'uppercase',
+          'text-wrap': 'none', 'text-background-color': '#03182e', 'text-background-opacity': 0.7, 'text-background-padding': 5,
+          'text-border-width': 1, 'text-border-color': 'data(tc)', 'text-border-opacity': 0.9 } },
         { selector: 'edge', style: {
           'width': 2, 'line-color': 'data(color)', 'line-opacity': 0.95, 'target-arrow-color': 'data(color)', 'target-arrow-shape': 'triangle',
           'arrow-scale': 1.2, 'curve-style': 'bezier', 'control-point-step-size': 50,
@@ -989,8 +1002,25 @@
       moved.forEach(n => { const i = item(n.id()); if (i) { const p = n.position(); i.x = Math.round(p.x); i.y = Math.round(p.y); moves.push({ id: i.id, x: i.x, y: i.y }); } });
       if (moves.length) op({ op: 'move', moves });
     });
+    cy.nodes('[?isTag]').ungrabify();
+    cy.on('position', 'node', e => { if (!e.target.data('isTag')) placeTagsSoon(); });
+    placeTags();
     applyTeamFilter();
   }
+
+  // Keep each scenario's team line just inside the top edge of its box.
+  function placeTags() {
+    if (!cy) return;
+    cy.batch(() => cy.nodes('[?isTag]').forEach(t => {
+      const c = cy.getElementById(t.data('of'));
+      if (!c.length) return;
+      const bb = c.boundingBox({ includeLabels: false, includeOverlays: false, includeUnderlays: false, includeOutlines: false });
+      t.position({ x: (bb.x1 + bb.x2) / 2, y: bb.y1 + 20 });
+      t.toggleClass('faded', c.hasClass('faded'));
+    }));
+  }
+  let tagFrame = 0;
+  function placeTagsSoon() { if (!tagFrame) tagFrame = requestAnimationFrame(() => { tagFrame = 0; placeTags(); }); }
 
   function updateFoot() {
     if (!$('fCards')) return;
@@ -1018,10 +1048,12 @@
     renderTeamToggles();
     if (dragging) return; // never yank a card out from under someone's mouse
     cy.json({ elements: elements() });
+    cy.nodes('[?isTag]').ungrabify();
     cy.elements().removeClass('faded sel source');
     if (arrowMode && arrowFrom) cy.getElementById(arrowFrom).addClass('source');
     applyTeamFilter();
     applyFocus();
+    placeTags();
     $('cbNames').innerHTML = state.items.map(i => `<option value="${esc(i.name)}">`).join('');
   }
 
@@ -1039,6 +1071,7 @@
       ? el.closedNeighborhood().filter(x => !x.hasClass('hiddenTeam')).union(el.closedNeighborhood().nodes().parents())
       : el.union(el.connectedNodes()).union(el.connectedNodes().parents());
     cy.elements().not(keep).addClass('faded');
+    placeTags();
   }
   function select(sel) { selected = sel; editing = null; applyFocus(); renderDrawer(); }
 
