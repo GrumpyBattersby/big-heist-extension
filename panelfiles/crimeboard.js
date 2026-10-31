@@ -11,6 +11,13 @@
 //   GET  /api/crimeboard?rev=&cat=   polled every 4s while open; only sends what changed
 //   POST /api/crimeboard/op          one change (add card, note, arrow, move...); returns the board
 //
+// TWO BOARDS (2026-11-01): the same code also runs the Perps' own Crime Board (/api/blockmarket -
+// the route name is left over from when it was called the Block Market; dark red instead of blue).
+// Judges and Perps each only see their own board; the GM gets both buttons, labelled by side. Only one is open at a
+// time; setBoard() switches between them. The red look is the blue look with every blue/cyan colour
+// turned dark red: retint() below for the board canvas, and the generated "#cb.market" section at
+// the end of crimeboard.css for everything else (tools/make_market_css.py rebuilds it).
+//
 // Needs cytoscape.min.js loaded first, and panel.js's window.BigHeistPanel bridge for the backend
 // URL and auth headers. Everything is drawn into <div id="cb"> in panel.html.
 // ============================
@@ -20,6 +27,47 @@
   const POLL_MS = 4000;
   // Set by crimeboard-obs.html (the OBS browser source page): read-only, no login, a key instead.
   const OBS = window.CRIMEBOARD_OBS || null;
+  // ---------- which board ----------
+  const BOARD_CFG = {
+    crime: {
+      key: 'crime', api: '/api/crimeboard', title: 'CRIME BOARD', name: 'Crime Board', button: 'crimeboard-open-button',
+      readout: 'M.A.C. // Sector 21 case files', terminal: 'M.A.C. terminal 21-07', link: 'M.A.C.', bg: 'cb-bg.webp',
+      notPlayer: 'The Crime Board is for the Judges playing in the RPG. If that\'s you, ask the GM to link your character.'
+    },
+    market: {
+      key: 'market', api: '/api/blockmarket', title: 'CRIME BOARD', name: 'Crime Board', button: 'blockmarket-open-button',
+      readout: 'Under the counter // Sector 21 street files', terminal: 'Street terminal 21-13', link: 'the Crime Board', bg: 'cb-bg-market.webp',
+      notPlayer: 'This Crime Board is for the Perps playing in the RPG. If that\'s you, ask the GM to link your character.'
+    }
+  };
+  let B = BOARD_CFG[(OBS && OBS.board) || 'crime'] || BOARD_CFG.crime;
+
+  // Perps' board colours: every blue or cyan becomes the same lightness of dark red. Team colours
+  // are the GM's choice and never pass through here.
+  function tintRgb(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+    if (d < 0.0001) return null;
+    const sat = d / (1 - Math.abs(2 * l - 1));
+    let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+    if (h < 165 || h > 265 || sat < 0.12) return null;
+    const S = Math.min(1, sat * 0.9), L = l > 0.8 ? l : l * 0.72, H = 352;
+    const c = (1 - Math.abs(2 * L - 1)) * S, x = c * (1 - Math.abs((H / 60) % 2 - 1)), m = L - c / 2;
+    const [R, G, Bl] = [c, 0, x]; // H between 300 and 360
+    return [R, G, Bl].map(v => Math.round((v + m) * 255));
+  }
+  function retint(str) {
+    if (B.key !== 'market' || typeof str !== 'string') return str;
+    return str.replace(/#([0-9a-fA-F]{6})\b/g, (all, hex) => {
+      const t = tintRgb(parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16));
+      return t ? '#' + t.map(v => v.toString(16).padStart(2, '0')).join('') : all;
+    }).replace(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(,\s*[\d.]+\s*)?\)/g, (all, r, g, b, a) => {
+      const t = tintRgb(+r, +g, +b);
+      return t ? (a ? 'rgba(' : 'rgb(') + t.join(', ') + (a || '') + ')' : all;
+    }).replace(/cb-bg\.webp/g, B.bg);
+  }
+
   const GM_TEAM = { name: 'GM', color: '#2bb9c9' };
   const NO_TEAM = { name: 'No team', color: '#8a93a6' };
   const TYPES = {
@@ -176,6 +224,36 @@
   let lastEventAt = null;
 
   const reindex = () => { REC_INDEX = new Map(RECORDS.map(r => [nameKey(r.name), r])); };
+  // How close a typed name is to a M.A.C. name: -1 = not close, else a small distance (lower = closer).
+  // Compares the whole name and each word, ignoring case, spaces and punctuation.
+  function editDist(a, b, cap) {
+    if (Math.abs(a.length - b.length) > cap) return cap + 1;
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i]; let low = i;
+      for (let j = 1; j <= b.length; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        low = Math.min(low, cur[j]);
+      }
+      if (low > cap) return cap + 1;
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  function nearness(typed, name) {
+    const clean = v => String(v).toLowerCase().replace(/[^a-z0-9 ]+/g, '').replace(/\s+/g, ' ').trim();
+    const t = clean(typed), n = clean(name);
+    if (!t || !n) return -1;
+    if (t.replace(/ /g, '') === n.replace(/ /g, '')) return 0;
+    const cap = t.length <= 5 ? 1 : 2;
+    const whole = editDist(t, n, cap);
+    if (whole <= cap) return whole;
+    // one typed word close to one word of the name ("bashr" ~ "bashar"), for longer words only
+    const tw = t.split(' ').filter(w => w.length >= 4), nw = n.split(' ').filter(w => w.length >= 4);
+    let best = 99;
+    tw.forEach(a => nw.forEach(b => { const d = editDist(a, b, a.length <= 5 ? 1 : 2); if (d <= (a.length <= 5 ? 1 : 2)) best = Math.min(best, d + 1); }));
+    return best < 99 ? best : -1;
+  }
   const recordFor = i => (i.src === 'record' || i.src === 'pending') ? REC_INDEX.get(nameKey(i.name)) : null;
   const item = id => state.items.find(i => i.id === id);
   const caseOf = id => state.cases.find(c => c.id === id) || { id, name: 'Unknown scenario' };
@@ -212,7 +290,7 @@
   function poll() {
     if (polling || !isOpen) return;
     polling = true;
-    api((OBS ? '/api/crimeboard/obs?key=' + encodeURIComponent(OBS.key) + '&' : '/api/crimeboard?') + 'rev=' + encodeURIComponent(rev) + '&cat=' + encodeURIComponent(cat))
+    api((OBS ? B.api + '/obs?key=' + encodeURIComponent(OBS.key) + '&' : B.api + '?') + 'rev=' + encodeURIComponent(rev) + '&cat=' + encodeURIComponent(cat))
       .then(({ status, data }) => {
         setOnline(true);
         if (status !== 200) { showGate(data && data.error, data && data.message, status); return; }
@@ -233,7 +311,7 @@
   }
 
   function op(body) {
-    return api('/api/crimeboard/op', { method: 'POST', body: JSON.stringify(body) })
+    return api(B.api + '/op', { method: 'POST', body: JSON.stringify(body) })
       .then(({ status, data }) => {
         setOnline(true);
         if (status !== 200 || !data.ok) { announce((data && data.message) || 'That didn\'t save. Try again.'); return null; }
@@ -242,21 +320,50 @@
         renderAll();
         return data;
       })
-      .catch(() => { setOnline(false); announce('Can\'t reach M.A.C. right now. Try again in a moment.'); return null; });
+      .catch(() => { setOnline(false); announce('Can\'t reach ' + B.link + ' right now. Try again in a moment.'); return null; });
   }
 
   // ---------- open / close ----------
-  let root = null, isOpen = false, built = false, access = false;
+  let keysWired = false;
+  let root = null, isOpen = false, built = false, access = { crime: false, market: false };
 
+  // panel.js says which boards this viewer may open: { crime, market }. (A plain true/false, from an
+  // older panel.js, means the Crime Board only.)
   function setAccess(allowed) {
-    access = !!allowed;
-    const btn = document.getElementById('crimeboard-open-button');
-    if (btn) btn.style.display = access ? '' : 'none';
-    if (!access && isOpen) close();
+    access = (allowed && typeof allowed === 'object') ? { crime: !!allowed.crime, market: !!allowed.market } : { crime: !!allowed, market: false };
+    // Both boards are called the Crime Board; only someone who can open both (the GM) needs them told apart.
+    const both = access.crime && access.market;
+    const labels = { crime: both ? 'Crime Board - Judges' : 'Crime Board', market: both ? 'Crime Board - Perps' : 'Crime Board' };
+    Object.values(BOARD_CFG).forEach(c => {
+      const btn = document.getElementById(c.button);
+      if (!btn) return;
+      btn.style.display = access[c.key] ? '' : 'none';
+      btn.textContent = labels[c.key];
+    });
+    if (isOpen && !access[B.key]) close();
   }
-  function openBoard() {
+
+  // Switches to the other board: everything from the old one is dropped and the screen is rebuilt.
+  // The M.A.C. list is the same for both, so it's kept.
+  function setBoard(key) {
+    const next = BOARD_CFG[key];
+    if (!next || next === B) return;
+    if (isOpen) close();
+    B = next;
+    state = { cases: [], teams: [], players: [], items: [], links: [], notes: [], events: [] };
+    me = { name: '', team: null, isGM: false }; gm = null;
+    rev = ''; loaded = false; lastEventAt = null;
+    selected = null; editing = null; pView = null; pAddCase = null; mode = null;
+    Object.keys(shown).forEach(k => delete shown[k]);
+    if (cy) { cy.destroy(); cy = null; }
+    built = false;
+  }
+
+  function openBoard(key) {
+    if (typeof key === 'string') setBoard(key);
     root = document.getElementById('cb');
     if (!root) return;
+    root.classList.toggle('market', B.key === 'market');
     if (!built) build();
     root.hidden = false;
     isOpen = true;
@@ -281,13 +388,13 @@
     root.innerHTML = `
   <div class="toast" id="cbToast" role="status" hidden></div>
   <div class="stage" id="cbStage">
-    <div class="gate" id="cbGate"><div class="gate-card"><h1 class="logo">CRIME BOARD</h1><p id="cbGateMsg">Connecting to M.A.C.…</p><button class="x-close" data-close>Back to terminal</button></div></div>
+    <div class="gate" id="cbGate"><div class="gate-card"><h1 class="logo">${B.title}</h1><p id="cbGateMsg">Connecting to ${B.link}…</p><button class="x-close" data-close>Back to terminal</button></div></div>
 
     <div class="panel-wrap fill" id="panelWrap" hidden>
       <div class="panel-frame">
         <div class="p-head">
           <div class="p-title">
-            <h1 class="logo">CRIME BOARD</h1>
+            <h1 class="logo">${B.title}</h1>
             <span class="head-tools"><button class="x-close gm" id="pGm" hidden>GM</button><button class="x-close" data-close>Close</button></span>
             <span class="me" id="pMe"></span>
           </div>
@@ -301,8 +408,8 @@
 
     <div class="board" id="board" hidden>
       <div class="b-bar">
-        <h1 class="logo">CRIME BOARD</h1>
-        <div class="sub"><span class="readout">M.A.C. // Sector 21 case files</span><span class="kicker">Shared by every team</span></div>
+        <h1 class="logo">${B.title}</h1>
+        <div class="sub"><span class="readout">${B.readout}</span><span class="kicker">Shared by every team</span></div>
         <div class="search">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg>
           <input class="field" id="bSearch" type="search" placeholder="Find a card" list="cbNames" autocomplete="off">
@@ -358,7 +465,7 @@
         <span>Arrows <b id="fArrows">0</b></span>
         <span>Scenarios <b id="fCases">0</b></span>
         <span class="grow"></span>
-        <span>M.A.C. terminal 21-07</span>
+        <span>${B.terminal}</span>
         <span id="fClock"></span>
         <span class="vents" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
       </div>
@@ -384,10 +491,10 @@
     if (!gate) return;
     // Once the board has loaded, a hiccup shouldn't hide it; the footer LED shows the link is down.
     if (loaded && (error === 'loading' || error === 'offline' || status >= 500)) return;
-    let text = message || 'Connecting to M.A.C.…';
-    if (error === 'not_a_player') text = 'The Crime Board is for the Judges and Perps playing in the RPG. If that\'s you, ask the GM to link your character.';
-    if (error === 'identity_not_shared') text = 'Share your Twitch identity with this extension to open the Crime Board.';
-    if (error === 'offline') text = 'Can\'t reach M.A.C. right now. Trying again…';
+    let text = message || 'Connecting to ' + B.link + '…';
+    if (error === 'not_a_player') text = (message && /removed you/.test(message)) ? message : B.notPlayer;
+    if (error === 'identity_not_shared') text = 'Share your Twitch identity with this extension to open the ' + B.name + '.';
+    if (error === 'offline') text = 'Can\'t reach ' + B.link + ' right now. Trying again…';
     if (error === 'bad_key') text = 'This OBS view needs the right key at the end of its address (…?key=). Check CRIMEBOARD_OBS_KEY on Render.';
     $('cbGateMsg').textContent = text;
     gate.hidden = false;
@@ -516,11 +623,18 @@
       : i.src === 'pending' ? `<span class="src lead">New lead</span><span>Waiting for the GM to add it${edited ? ' · ' + edited : ''}</span>`
       : `<span class="src player">Player clue</span><span>${edited}</span>`;
     const text = detailsOf(i);
+    // A lead whose name is a near miss for a M.A.C. record is probably a typo: offer to link it.
+    const near = (i.src === 'pending' && canChange(i)) ? RECORDS.map(r => ({ r, d: nearness(i.name, r.name) })).filter(x => x.d >= 0)
+      .sort((a, b) => a.d - b.d).slice(0, 3) : [];
+    const fix = near.length ? `<div class="lead-fix"><span class="kicker">Typo? Did you mean…</span>${near.map(({ r }) =>
+      `<button type="button" class="btn small" data-linkrec="${esc(r.name)}">Link to M.A.C.: ${esc(r.name)}</button>`).join('')}</div>` : '';
     return `<div class="details${i.src === 'pending' ? ' lead' : ''}"><div class="meta">${meta}</div>
-      <p>${text ? esc(text) : '<span class="empty">No details yet.</span>'}</p>
+      <p>${text ? esc(text) : '<span class="empty">No details yet.</span>'}</p>${fix}
       ${law ? '' : `<button class="btn small" id="${prefix}Edit" style="justify-self:start">Edit details</button>`}</div>`;
   }
   function wireDetails(i, prefix) {
+    document.querySelectorAll('#cb [data-linkrec]').forEach(btn => btn.onclick = () =>
+      op({ op: 'editCard', id: i.id, name: btn.dataset.linkrec }).then(ok => { if (ok) renderAll(); }));
     const eb = $(prefix + 'Edit');
     if (eb) eb.onclick = () => { editing = i.id; renderAll(); const t = $(prefix + 'EditText'); if (t) t.focus(); };
     const f = $(prefix + 'EditForm');
@@ -633,7 +747,21 @@
       if (!shown.length) html += `<li class="combo-empty" role="presentation">Nothing in M.A.C. matches “${esc(input.value)}”.</li>`;
       const typed = input.value.trim();
       if (typed && !REC_INDEX.has(nameKey(typed))) {
-        html += `<li class="combo-group" role="presentation">Not in M.A.C. yet?</li>`;
+        // A near miss ("Bashr Tarr", "bashar tar") is almost always a typo: offer the real record
+        // first so nobody makes a lead that never turns into the case file.
+        const shownK = new Set(shown.map(x => x.k));
+        const near = typed.length >= 3 ? RECORDS.map((r, k) => ({ r, k, d: nearness(typed, r.name) }))
+          .filter(x => x.d >= 0 && !shownK.has(x.k)).sort((a, b) => a.d - b.d).slice(0, 4) : [];
+        if (near.length) {
+          html += `<li class="combo-group warn" role="presentation">Did you mean…?</li>`;
+          near.forEach(({ r, k }) => {
+            const where = whereIs(r), here = where.some(x => x.caseId === caseId), t = KIND_TYPE[r.kind];
+            html += `<li role="option" id="${uid}-o${k}" data-k="${k}" aria-disabled="${here}" class="${here ? 'off' : ''}">
+              <span class="ico${isTall(t) ? ' tall' : ''}"><img src="${esc(imgState[r.img] === 'bad' || !r.img ? standInPicture(t, r.name) : r.img)}" data-fallback="${esc(t)}|${esc(r.name)}" data-url="${esc(r.img || '')}" alt="" loading="lazy"></span>
+              <span class="txt"><b>${esc(r.name)}</b><small>${t} in M.A.C.${here ? ' · Already in this scenario' : ''}</small></span></li>`;
+          });
+        }
+        html += `<li class="combo-group" role="presentation">${near.length ? 'No, it really is new' : 'Not in M.A.C. yet?'}</li>`;
         [['person', 'Add as a new person'], ['place', 'Add as a new place'], ['item', 'Add as a new item']].forEach(([kind, label]) => {
           html += `<li role="option" class="new" id="${uid}-n${kind}" data-new="${kind}">
             <span class="ico${kind === 'person' ? ' tall' : ''} plus">+</span>
@@ -664,7 +792,8 @@
       if (li.dataset.new) { picked = { newKind: li.dataset.new, name: input.value.trim() }; rootEl.classList.add('picked', 'newlead'); close(); }
       else choose(+li.dataset.k);
     }
-    input.onfocus = open;
+    let quietFocus = false;
+    input.onfocus = () => { if (quietFocus) { quietFocus = false; return; } open(); };
     input.oninput = () => { picked = -1; rootEl.classList.remove('picked', 'need', 'newlead'); open(); };
     input.onblur = () => setTimeout(close, 120);
     toggle.onmousedown = e => { e.preventDefault(); if (list.hidden) { input.focus(); open(); } else close(); };
@@ -679,7 +808,9 @@
       value: () => picked,
       reset() { picked = -1; input.value = ''; rootEl.classList.remove('picked', 'need', 'newlead'); close(); },
       refresh() { if (picked !== -1 && !picked.newKind && whereIs(picked).some(x => x.caseId === getCaseId())) this.reset(); if (!list.hidden) render(); },
-      flag() { rootEl.classList.add('need'); input.focus(); }
+      flag() { rootEl.classList.add('need'); input.focus(); },
+      // Puts the cursor in the name box without dropping the whole list open; typing opens it.
+      focus() { quietFocus = true; input.focus(); if (document.activeElement !== input) quietFocus = false; }
     };
   }
   function cardFromCombo(v, caseId, note) {
@@ -712,7 +843,7 @@
       // Each scenario is its own box: the name on a full-width line (so you can see which one
       // you're editing), then how many cards it has, who's investigating it, and its buttons.
       const on = (state.teams || []).filter(t => t.caseId === c.id);
-      return `<form class="gm-case" data-rename="${c.id}" style="--tc:${on[0] ? on[0].color : '#66fbfd'}">
+      return `<form class="gm-case" data-rename="${c.id}" style="--tc:${on[0] ? on[0].color : retint('#66fbfd')}">
         <input class="field" value="${esc(c.name)}" maxlength="60" aria-label="Scenario name">
         <span class="kicker">${used} card${used === 1 ? '' : 's'} · ${on.length ? on.map(t => teamWord(t.id)).join(', ') : 'no team on it'}</span>
         <span class="card-tools"><button class="btn small">Rename</button><button type="button" class="btn small" data-show="case:${c.id}">Show on stream</button>${used ? '' : `<button type="button" class="btn small danger" data-delcase="${c.id}">Delete</button>`}</span></form>`;
@@ -834,6 +965,8 @@
     $('pCase').onchange = e => { pAddCase = e.target.value; if (pCombo) pCombo.refresh(); };
     $('pSrcNew').onclick = () => { pAddSrc = 'player'; renderPanelAdd(); };
     $('pSrcLaw').onclick = () => { pAddSrc = 'record'; renderPanelAdd(); };
+    // Ready to type the name straight away.
+    if (pCombo) pCombo.focus(); else $('pName').focus();
     $('pAddForm').onsubmit = async e => {
       e.preventDefault();
       const caseId = $('pCase').value, note = $('pNote').value.trim();
@@ -884,7 +1017,7 @@
     // outer frame in its colour), and its title says who's on it.
     state.cases.forEach(c => {
       const teams = (state.teams || []).filter(t => t.caseId === c.id);
-      const c1 = teams[0] ? teams[0].color : '#66fbfd', c2 = teams[1] ? teams[1].color : c1;
+      const c1 = teams[0] ? teams[0].color : retint('#66fbfd'), c2 = teams[1] ? teams[1].color : c1;
       const who = teams.map(t => t.name.toUpperCase()).join('  ·  ');
       els.push({ group: 'nodes', data: { id: c.id, label: c.name.toUpperCase(), isCase: 1,
         tc: c1, tc2: c2, ow: teams.length > 1 ? 3 : 0, bw: teams.length ? 3 : 1 } });
@@ -906,10 +1039,15 @@
     return els;
   }
 
+  function retintStyles(list) {
+    if (B.key !== 'market') return list;
+    return list.map(r => ({ selector: r.selector, style: Object.fromEntries(Object.entries(r.style).map(([k, v]) => [k, retint(v)])) }));
+  }
+
   function initCy() {
     if (cy) return;
     const cyEl = $('cy');
-    cyEl.style.backgroundImage = (OBS && OBS.clear) ? 'none' : 'radial-gradient(ellipse 70% 45% at 50% 100%, rgba(40, 200, 255, .22), transparent 70%), linear-gradient(180deg, rgba(1, 6, 20, .72), rgba(1, 8, 26, .9)), url("cb-bg.webp")';
+    cyEl.style.backgroundImage = (OBS && OBS.clear) ? 'none' : retint('radial-gradient(ellipse 70% 45% at 50% 100%, rgba(40, 200, 255, .22), transparent 70%), linear-gradient(180deg, rgba(1, 6, 20, .72), rgba(1, 8, 26, .9)), url("cb-bg.webp")');
     if (OBS && OBS.clear) cyEl.style.backgroundColor = 'transparent';
     cyEl.style.backgroundSize = 'cover, cover';
     cyEl.style.backgroundPosition = 'center, center';
@@ -921,7 +1059,7 @@
       layout: { name: 'preset' },
       minZoom: 0.2, maxZoom: 2.5,
       autoungrabify: !!OBS, userPanningEnabled: !OBS, userZoomingEnabled: !OBS, boxSelectionEnabled: false, autounselectify: !!OBS,
-      style: [
+      style: retintStyles([
         // Everything on the board is projected light: see-through hologram pictures in thin glowing
         // frames, glowing labels with no solid boxes, glowing team-coloured beams between cards.
         { selector: 'node', style: {
@@ -972,7 +1110,7 @@
         { selector: 'node.sel', style: { 'border-color': '#e9ffff', 'border-width': 3, 'outline-width': 2, 'outline-opacity': 1, 'underlay-opacity': 0.4, 'underlay-padding': 22 } },
         { selector: 'edge.sel', style: { 'width': 4, 'underlay-opacity': 0.6 } },
         { selector: 'node.source', style: { 'border-color': '#e9ffff', 'border-width': 5, 'border-style': 'double', 'underlay-opacity': 0.45 } }
-      ]
+      ])
     });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (cy) cy.style().update(); });
     // Canvas text is drawn once; redraw when late fonts arrive (some browsers resolve fonts.ready early).
@@ -1136,6 +1274,16 @@
     select({ kind: 'item', id });
     cy.animate({ center: { eles: n }, zoom: Math.max(cy.zoom(), 1) }, { duration: 350 });
   }
+  // After adding a card: select it and, only if it's off screen, slide the view to it. The zoom stays
+  // exactly as the player left it.
+  function showNewCard(id) {
+    const n = cy && cy.getElementById(id);
+    if (!n || !n.length) return;
+    select({ kind: 'item', id });
+    const bb = n.renderedBoundingBox(), w = cy.width(), h = cy.height();
+    const inView = bb.x1 >= 0 && bb.y1 >= 0 && bb.x2 <= w && bb.y2 <= h;
+    if (!inView) cy.animate({ center: { eles: n } }, { duration: 350 });
+  }
   function goMine() {
     if (!cy) return;
     const area = cy.getElementById(myScenario());
@@ -1210,7 +1358,7 @@
       $('newFields').hidden = src !== 'player';
       $('pinName').required = src === 'player';
     }
-    $('srcLaw').onclick = () => setPinSrc('record');
+    $('srcLaw').onclick = () => { setPinSrc('record'); pinCombo.focus(); };
     $('srcNew').onclick = () => { setPinSrc('player'); $('pinName').focus(); };
     $('pinBtn').onclick = () => {
       if (!myTeam()) { announce('You need a team before you can add cards. Ask the GM.'); return; }
@@ -1221,6 +1369,7 @@
         pinType.innerHTML = CARD_TYPES.map(t => `<option${t === 'Evidence' ? ' selected' : ''}>${t}</option>`).join('');
         pinCase.innerHTML = scenarioOptions(myScenario());
         pinCombo.reset(); setPinSrc('record');
+        pinCombo.focus();
       }
     };
     pinCase.onchange = () => pinCombo.refresh();
@@ -1240,14 +1389,15 @@
       }
       if (document.activeElement) document.activeElement.blur();
       const id = await createCard(card);
-      if (id) { pinForm.hidden = true; flyTo(id); }
+      if (id) { pinForm.hidden = true; showNewCard(id); }
     };
 
-    document.addEventListener('keydown', e => {
+    if (!keysWired) document.addEventListener('keydown', e => {
       if (!isOpen || mode !== 'board' || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
       if (e.key === 'a' || e.key === 'A') arrowMode ? endArrow() : startArrow();
       if (e.key === 'Escape') { endArrow(); $('pinForm').hidden = true; select(null); }
     });
+    keysWired = true;
   }
 
   // ---------- the scan sweep: once at random, roughly every minute ----------
@@ -1287,17 +1437,20 @@
   }
 
   // ---------- hook-up ----------
-  window.CrimeBoard = { setAccess, open: openBoard, close };
+  window.CrimeBoard = { setAccess, open: openBoard, close, setBoard };
   document.addEventListener('DOMContentLoaded', () => {
     if (OBS) {
       const el = document.getElementById('cb');
       el.classList.add('obs');
+      if (B.key === 'market') el.classList.add('market');
       if (OBS.clear) el.classList.add('clear');
       openBoard();
       return;
     }
-    const btn = document.getElementById('crimeboard-open-button');
-    if (btn) btn.addEventListener('click', openBoard);
+    Object.values(BOARD_CFG).forEach(c => {
+      const btn = document.getElementById(c.button);
+      if (btn) btn.addEventListener('click', () => openBoard(c.key));
+    });
     setAccess(access);
   });
 })();

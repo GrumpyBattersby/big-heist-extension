@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-10-30-crime-board");
+    console.log("BIG HEIST PANEL BUILD: 2026-11-01-perp-crime-board");
 
     // INSTANT CLICK FEEDBACK (added 2026-08-24, per user request - "there's often a delay til the
     // panel updates... change the button at the time of clicking so they know they've clicked.
@@ -4852,12 +4852,18 @@
         if (glossaryBtn) glossaryBtn.style.display = (f.itemGlossary && !isJudgeViewer) ? "" : "none";
         if (achievementsBtn) achievementsBtn.style.display = f.achievements ? "" : "none";
 
-        // Crime Board (added 2026-10-30) - players only: a Judges-group member, or anyone with a
-        // Judge/Perp character assigned, plus the broadcaster as GM. The backend checks this again
-        // on every request; this only decides whether the button shows.
-        const isBoardPlayer = !!(data && (data.assignedJudgeName || data.assignedPerpName || data.isWatchingJudge));
+        // Crime Boards (Judges' added 2026-10-30, Perps' own added 2026-11-01) - players
+        // only. Judges (a Judges-group member or anyone with a Judge character) get the Crime Board;
+        // Perps (anyone with a Perp character) get their own red one; the broadcaster gets both as GM.
+        // Both are switched by the crimeBoard feature flag. The backend checks this again on every
+        // request; this only decides which buttons show.
+        const isBoardJudge = !!(data && (data.assignedJudgeName || data.isWatchingJudge));
+        const isBoardPerp = !!(data && data.assignedPerpName);
         const isBroadcaster = typeof Twitch !== "undefined" && Twitch.ext && Twitch.ext.viewer && Twitch.ext.viewer.role === "broadcaster";
-        if (window.CrimeBoard) window.CrimeBoard.setAccess(!!f.crimeBoard && (isBoardPlayer || isBroadcaster));
+        if (window.CrimeBoard) window.CrimeBoard.setAccess({
+            crime: !!f.crimeBoard && (isBoardJudge || isBroadcaster),
+            market: !!f.crimeBoard && (isBoardPerp || isBroadcaster)
+        });
     }
 
     // Used inline inside renderPerpSheet for the action buttons that live inside the character
