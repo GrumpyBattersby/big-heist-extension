@@ -221,7 +221,27 @@ function buildCatalog(people, places, items) {
 module.exports = function mountBoards(app, deps) {
     mountBoard(app, deps, BOARDS.crime);
     mountBoard(app, deps, BOARDS.market);
+    // When Render stops the service on purpose (redeploy, restart, free-plan sleep) it sends SIGTERM
+    // and waits up to 30 seconds. Use that time to send anything not yet saved to GitHub, instead of
+    // losing up to 15 seconds of changes. Added 2026-11-01.
+    process.on('SIGTERM', () => stopSafely('SIGTERM'));
+    process.on('SIGINT', () => stopSafely('SIGINT'));
 };
+
+async function stopSafely(signal) {
+    if (shared.stopping) return;
+    shared.stopping = true;   // the boards refuse new changes from here on, so nothing arrives after the save
+    console.log('Crime Board: ' + signal + ' - saving both boards to GitHub before stopping');
+    const giveUp = setTimeout(() => { console.warn('Crime Board: save before stopping took too long - stopping anyway'); process.exit(0); }, 20000);
+    try {
+        await Promise.all(shared.boards.map(b => b.saveNow()));
+        console.log('Crime Board: saved, stopping');
+    } catch (e) {
+        console.warn('Crime Board: save before stopping failed - ' + e.message);
+    }
+    clearTimeout(giveUp);
+    process.exit(0);
+}
 
 function mountBoard(app, deps, cfg) {
     const { resolveIdentity, getPerp, queueAction, PUSH_SECRET, EXT_SECRET } = deps;
@@ -359,6 +379,16 @@ function mountBoard(app, deps, cfg) {
         } finally { saving = false; }
     }
 
+    // Saves straight away (used when the service is stopping). Waits for a save already under way.
+    async function saveNow() {
+        if (!GH.token || !board) return;
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+        for (let i = 0; i < 40 && saving; i++) await new Promise(r => setTimeout(r, 250));
+        if (dirtyBoard || dirtyCatalog) await flush();
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+        if (dirtyBoard || dirtyCatalog) throw new Error(LOG + ' could not reach GitHub');
+    }
+
     const changed = () => { board.rev = (board.rev || 0) + 1; freshEmpty = false; scheduleSave('board'); };
 
     function event(text) {
@@ -490,7 +520,8 @@ function mountBoard(app, deps, cfg) {
     // Bodies are parsed here (server.js skips /api/crimeboard and /api/blockmarket), with a size cap per route.
     const smallJson = express.json({ limit: '300kb' });
     const bigJson = express.json({ limit: '3mb' });
-    const ready = (req, res, next) => loadState === 'ready' ? next() : res.status(503).json({ error: 'loading', message: 'The ' + NAME + ' is starting up. Trying again shortly.' });
+    const ready = (req, res, next) => shared.stopping ? res.status(503).json({ error: 'loading', message: 'The ' + NAME + ' is restarting. Trying again shortly.' })
+        : loadState === 'ready' ? next() : res.status(503).json({ error: 'loading', message: 'The ' + NAME + ' is starting up. Trying again shortly.' });
 
     // ---------- Streamer.bot routes (push secret) ----------
 
@@ -769,7 +800,7 @@ function mountBoard(app, deps, cfg) {
         }
     }
 
-    shared.boards.push({ syncLeads });
+    shared.boards.push({ syncLeads, saveNow });
     load();
 }
 
