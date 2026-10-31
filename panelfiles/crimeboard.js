@@ -79,6 +79,39 @@
     Crime:    { color: '#8e3a3a', icon: '<path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/>' },
     Event:    { color: '#4b7848', icon: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/>' }
   };
+  // ---------- flags on people (added 2026-11-01) ----------
+  // Order here is the order they're shown in. Colours are the same on both boards.
+  const FLAGS = [
+    { id: 'investigate', label: 'Investigate', stamp: 'INVESTIGATE', bg: '#ffd21f', fg: '#050608', on: 'Under investigation' },
+    { id: 'apb',         label: 'APB',         stamp: 'APB',         bg: '#e8322a', fg: '#ffffff', on: 'APB out' },
+    { id: 'cubed',       label: 'Cubed',       stamp: 'ISO-CUBED',   bg: '#a9b8d4', fg: '#050608', on: 'Cubed (arrested)' },
+    { id: 'dead',        label: 'Dead',        stamp: 'DECEASED',    bg: '#050608', fg: '#ff4a3d', on: 'Dead' }
+  ];
+  const FLAG = Object.fromEntries(FLAGS.map(f => [f.id, f]));
+  const flagsOf = i => FLAGS.filter(f => Array.isArray(i.flags) && i.flags.includes(f.id));
+  const flagChips = i => flagsOf(i).map(f => `<span class="flag-chip" style="background:${f.bg};color:${f.fg}">${f.label}</span>`).join('');
+  // The stamp drawn over a flagged card's picture on the board (same shape as the card).
+  const flagCache = {};
+  function flagOverlay(flags, tall) {
+    const key = flags.join() + (tall ? 't' : '');
+    if (flagCache[key]) return flagCache[key];
+    const W = tall ? 62 : 96, H = tall ? 119 : 96, band = tall ? 14 : 16, fs = tall ? 9 : 11;
+    let b = '';
+    if (flags.includes('cubed')) for (let x = 6; x < W; x += 10) b += `<rect x="${x}" y="0" width="2.5" height="${H}" fill="#c8d2e6" fill-opacity=".85"/>`;
+    if (flags.includes('dead')) {
+      b += `<rect width="${W}" height="${H}" fill="#000" fill-opacity=".45"/>
+        <g transform="translate(${W / 2} ${H * 0.42}) rotate(-24)"><rect x="${-W * 0.48}" y="-9" width="${W * 0.96}" height="18" fill="none" stroke="#ff4a3d" stroke-width="2.5" rx="2"/>
+        <text x="0" y="5" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="${tall ? 10 : 14}" fill="#ff4a3d" textLength="${Math.round(W * 0.84)}" lengthAdjust="spacingAndGlyphs">DECEASED</text></g>`;
+    }
+    const bands = ['apb', 'investigate', 'cubed'].filter(f => flags.includes(f));
+    bands.forEach((f, k) => {
+      const y = H - band * (k + 1);
+      b += `<rect x="0" y="${y}" width="${W}" height="${band}" fill="${FLAG[f].bg}"/>
+        <text x="${W / 2}" y="${y + band / 2 + fs * 0.36}" text-anchor="middle" font-family="Impact, Arial Black, sans-serif" font-size="${fs}" fill="${FLAG[f].fg}" letter-spacing=".5"${FLAG[f].stamp.length * fs * 0.62 > W - 6 ? ` textLength="${W - 6}" lengthAdjust="spacingAndGlyphs"` : ''}>${FLAG[f].stamp}</text>`;
+    });
+    return flagCache[key] = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${b}</svg>`);
+  }
+
   const KIND_TYPE = { person: 'Person', robot: 'Robot', place: 'Location', item: 'Evidence' };
   const KIND_GROUP = { person: 'People', robot: 'People', place: 'Places', item: 'Items' };
   const isTall = type => type === 'Person' || type === 'Robot';
@@ -651,6 +684,25 @@
       };
     }
   }
+  const canFlag = i => isTall(i.type) && !!myTeam();
+  function flagsHtml(i, prefix) {
+    if (!isTall(i.type)) return '';
+    const set = flagsOf(i);
+    if (!canFlag(i)) return set.length ? `<section><span class="caption">Status</span><div class="flag-row">${flagChips(i)}</div></section>` : '';
+    const who = f => (i.flagBy && i.flagBy[f.id]) ? ` title="${esc(f.on)} - set by ${esc(i.flagBy[f.id].by)}, ${ago(i.flagBy[f.id].at)}"` : ` title="Flag as ${esc(f.on.toLowerCase())}"`;
+    return `<section><span class="caption">Status</span><div class="flag-row" id="${prefix}Flags">${FLAGS.map(f => {
+      const on = set.includes(f);
+      return `<button type="button" class="flag-btn${on ? ' on' : ''}" data-flag="${f.id}" aria-pressed="${on}" style="--fb:${f.bg};--ff:${f.fg}"${who(f)}>${f.label}</button>`;
+    }).join('')}</div></section>`;
+  }
+  function wireFlags(i, prefix) {
+    const row = $(prefix + 'Flags');
+    if (!row) return;
+    row.querySelectorAll('[data-flag]').forEach(btn => btn.onclick = () => {
+      btn.disabled = true;
+      op({ op: 'setFlag', id: i.id, flag: btn.dataset.flag, on: btn.getAttribute('aria-pressed') !== 'true' }).then(() => { btn.disabled = false; });
+    });
+  }
   function cardToolsHtml(i, prefix) {
     if (!canChange(i)) return '';
     return `<div class="card-tools">${me.isGM ? `<button class="btn small" id="${prefix}ShowCard">Show on stream</button>` : ''}<button class="btn small danger" id="${prefix}DelCard">Take this card down</button></div>`;
@@ -940,7 +992,7 @@
       rows.forEach(i => {
         const n = allNotesFor(i).length, l = linksFor(i.id).length, also = copiesOf(i).length;
         html += `<button class="p-row" data-id="${i.id}">${thumb(i)}
-          <span><div class="name">${esc(i.name)}</div><div class="sub">${esc(i.type)} · ${n} note${n === 1 ? '' : 's'} · ${l} link${l === 1 ? '' : 's'}${also ? ' · also in another scenario' : ''}${i.src === 'pending' ? ' · new lead' : ''}</div></span>
+          <span><div class="name">${esc(i.name)}</div>${flagsOf(i).length ? `<div class="flag-row small">${flagChips(i)}</div>` : ''}<div class="sub">${esc(i.type)} · ${n} note${n === 1 ? '' : 's'} · ${l} link${l === 1 ? '' : 's'}${also ? ' · also in another scenario' : ''}${i.src === 'pending' ? ' · new lead' : ''}</div></span>
           <span class="dots">${teamsOn(i.id).map(t => dot(t, tName(t))).join('')}</span></button>`;
       });
       html += '</div>';
@@ -1001,6 +1053,7 @@
       <button class="back" id="pBack">← All cards</button>
       <div style="display:flex;gap:12px;align-items:center">${thumb(i, true)}
         <div style="min-width:0"><h3>${esc(i.name)}</h3><span class="kicker">${esc(i.type)} · ${esc(caseOf(i.caseId).name)}</span></div></div>
+      ${flagsHtml(i, 'p')}
       ${detailsHtml(i, 'p')}
       ${alsoHtml(i)}
       <section><span class="caption">Connections</span>${connectionsHtml(i)}</section>
@@ -1013,6 +1066,7 @@
     pBody.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { pView = b.dataset.go; renderPanel(); pBody.scrollTop = 0; });
     wireNoteForm('p', i.id, pBody);
     wireDetails(i, 'p');
+    wireFlags(i, 'p');
     wireCardTools(i, 'p', () => { pView = null; renderPanel(); });
   }
 
@@ -1036,7 +1090,9 @@
       if (who) els.push({ group: 'nodes', data: { id: 'tag:' + c.id, label: who, isTag: 1, of: c.id, tc: c1 } });
     });
     state.items.forEach(i => els.push({ group: 'nodes',
-      data: { id: i.id, label: i.name, parent: i.caseId, color: TYPES[typeOf(i.type)].color, frame: holoFrame(TYPES[typeOf(i.type)].color), img: imgFor(i), tall: isTall(i.type) ? 1 : 0, lead: i.src === 'pending' ? 1 : 0 },
+      data: { id: i.id, label: i.name, parent: i.caseId, color: TYPES[typeOf(i.type)].color, frame: holoFrame(TYPES[typeOf(i.type)].color), img: imgFor(i), tall: isTall(i.type) ? 1 : 0, lead: i.src === 'pending' ? 1 : 0,
+        ...(isTall(i.type) && flagsOf(i).length ? { flagged: 1, flagImg: flagOverlay(flagsOf(i).map(f => f.id), isTall(i.type)),
+          dead: i.flags.includes('dead') ? 1 : 0, apb: i.flags.includes('apb') ? 1 : 0 } : {}) },
       position: { x: i.x, y: i.y } }));
     state.links.forEach(l => { if (item(l.from) && item(l.to)) els.push({ group: 'edges',
       data: { id: l.id, source: l.from, target: l.to, label: l.label || '', color: tBeam(l.team), team: l.team } }); });
@@ -1087,6 +1143,14 @@
           'text-border-width': 1, 'text-border-color': readout, 'text-border-opacity': 0.5,
           'transition-property': 'opacity, underlay-opacity', 'transition-duration': '200ms' } },
         { selector: 'node[?tall]', style: { 'width': 62, 'height': 119, 'background-position-y': '0%' } },
+        // Flagged people: the stamp is a second picture laid over the artwork.
+        { selector: 'node[?flagged]', style: {
+          'background-image': e => [e.data('img'), e.data('flagImg')], 'background-fit': 'cover none', 'background-clip': 'node node',
+          'background-width': 'auto 100%', 'background-height': 'auto 100%', 'background-position-x': '50% 50%', 'background-position-y': '50% 50%',
+          'background-image-opacity': '0.8 1', 'background-image-crossorigin': 'null null', 'background-image-containment': 'inside inside' } },
+        { selector: 'node[?flagged][?tall]', style: { 'background-position-y': '0% 50%' } },
+        { selector: 'node[?dead]', style: { 'background-image-opacity': '0.5 1' } },
+        { selector: 'node[?apb]', style: { 'underlay-color': '#ff2a2a', 'underlay-opacity': 0.4 } },
         { selector: 'node[?lead]', style: { 'border-style': 'dashed', 'border-color': yellow, 'outline-color': yellow, 'underlay-color': yellow, 'underlay-opacity': 0.12 } },
         { selector: 'node[?isCase]', style: {
           'background-color': '#0a6ea8', 'background-opacity': 0.07, 'background-image': 'none',
@@ -1242,6 +1306,7 @@
           <span class="kicker">${esc(caseOf(i.caseId).name)}</span>
         </header>
         <div class="scroll">
+          ${flagsHtml(i, 'd')}
           ${detailsHtml(i, 'd')}
           ${alsoHtml(i)}
           <section><span class="caption">Connections</span>${connectionsHtml(i)}
@@ -1255,6 +1320,7 @@
       if ($('dArrow')) $('dArrow').onclick = () => { startArrow(); pickForArrow(i.id); };
       wireNoteForm('d', i.id, drawer);
       wireDetails(i, 'd');
+      wireFlags(i, 'd');
       wireCardTools(i, 'd', () => select(null));
     } else {
       const l = state.links.find(x => x.id === selected.id);
