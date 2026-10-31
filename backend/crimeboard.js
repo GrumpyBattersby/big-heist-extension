@@ -69,6 +69,11 @@ const express = require('express');
 const { secretOk, rateLimit, counter } = require('./guard');
 
 const CARD_TYPES = ['Person', 'Robot', 'Location', 'Evidence', 'Group', 'Crime', 'Event'];
+// Flags a player can put on a person (or robot) card. Cubed and dead end an APB; dead and cubed
+// rule each other out. Added 2026-11-01.
+const FLAGS = { investigate: 'under investigation', apb: 'APB', cubed: 'cubed', dead: 'dead' };
+const FLAG_CLEARS = { cubed: ['apb', 'dead'], dead: ['apb', 'cubed', 'investigate'] };
+const FLAGGABLE = ['Person', 'Robot'];
 const KIND_TYPE = { person: 'Person', robot: 'Robot', place: 'Location', item: 'Evidence' };
 const IMG_BASE = process.env.CRIMEBOARD_IMG_BASE || 'https://grumpybattersby.github.io/big-heist-extension';
 const IMG_FOLDER = { person: 'people', robot: 'people', place: 'places', item: 'mac-items' };
@@ -703,6 +708,27 @@ function mountBoard(app, deps, cfg) {
                 const text = clip(b.text, LIMITS.note);
                 if (!item(b.itemId) || !text) return fail('Write something first.');
                 board.notes.push({ id: newId('n'), itemId: b.itemId, team, by, at: Date.now(), text });
+                changed();
+                break;
+            }
+            case 'setFlag': {
+                const i = item(b.id);
+                if (!i) return fail('That card has gone.');
+                if (!FLAGGABLE.includes(i.type)) return fail('Only people and robots can be flagged.');
+                const flag = String(b.flag || '');
+                if (!FLAGS[flag]) return fail('Unknown flag.');
+                const on = b.on === true;
+                // The same person pinned in several scenarios is one person: flag every copy.
+                const all = i.src === 'record' ? board.items.filter(x => x.src === 'record' && nameKey(x.name) === nameKey(i.name)) : [i];
+                all.forEach(x => {
+                    const cur = Array.isArray(x.flags) ? x.flags.filter(f => FLAGS[f]) : [];
+                    let next = cur.filter(f => f !== flag);
+                    if (on) { next = next.filter(f => !(FLAG_CLEARS[flag] || []).includes(f)); next.push(flag); }
+                    x.flags = next;
+                    x.flagBy = Object.assign({}, x.flagBy);
+                    if (on) x.flagBy[flag] = { by, at: Date.now() }; else delete x.flagBy[flag];
+                });
+                if (on) event(by + ' flagged ' + i.name + (flag === 'apb' ? ': APB out.' : flag === 'investigate' ? ' for investigation.' : ' as ' + FLAGS[flag] + '.'));
                 changed();
                 break;
             }
