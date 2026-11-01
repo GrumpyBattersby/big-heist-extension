@@ -2,7 +2,7 @@
     // panel being served is NOT this build - meaning Twitch's Asset Hosting is still serving an
     // older cached version regardless of re-uploading. This is the simplest way to check that,
     // much easier than digging through the Network tab.
-    console.log("BIG HEIST PANEL BUILD: 2026-11-01-flags");
+    console.log("BIG HEIST PANEL BUILD: 2026-11-01-families");
 
     // INSTANT CLICK FEEDBACK (added 2026-08-24, per user request - "there's often a delay til the
     // panel updates... change the button at the time of clicking so they know they've clicked.

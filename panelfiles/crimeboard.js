@@ -112,6 +112,33 @@
     return flagCache[key] = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${b}</svg>`);
   }
 
+  // ---------- GM: hidden things and crime families (added 2026-11-01) ----------
+  // Anything the GM adds (card, arrow, note) can be hidden from players until the GM reveals it.
+  // "New things I add start hidden" is remembered in the GM's browser.
+  const hideNewKey = 'cbGmHideNew';
+  function gmHideNew() { try { return localStorage.getItem(hideNewKey) !== '0'; } catch (e) { return true; } }
+  function setGmHideNew(on) { try { localStorage.setItem(hideNewKey, on ? '1' : '0'); } catch (e) { /* storage blocked - fine */ } }
+  const hiddenChip = '<span class="hidden-chip" title="Only you (GM) can see this">Hidden</span>';
+  const gmHideToggle = id => `<label class="toggle gm-hide"><input type="checkbox" id="${id}"${gmHideNew() ? ' checked' : ''}>Hidden from players until I reveal it</label>`;
+  const readHide = id => { const c = $(id); if (!c) return false; setGmHideNew(c.checked); return c.checked; };
+
+  // Crime families: org charts kept once for both boards. Players only ever receive revealed people.
+  const RANKS = ['Boss', 'Underboss', 'Consigliere', 'Capo', 'Soldier', 'Associate'];
+  const RANK_COLOR = { Boss: '#ffd21f', Underboss: '#ffb21f', Consigliere: '#c9a0ff', Capo: '#66fbfd', Soldier: '#9fd0ff', Associate: '#a9b8d4' };
+  const RING = { Boss: 0, Underboss: 1, Consigliere: 1, Capo: 1, Soldier: 2, Associate: 2 };
+  const families = () => state.families || [];
+  const famById = id => families().find(f => f.id === id);
+  const famRec = p => REC_INDEX.get(nameKey(p.name));
+  const famRevealed = p => !p.show || p.show.crime || p.show.market;
+  const rankChip = r => `<span class="rank-chip" style="background:${RANK_COLOR[r] || '#a9b8d4'}">${esc(r)}</span>`;
+  const rankSort = (a, b) => RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank) || a.name.localeCompare(b.name);
+  function famImg(p) {
+    const r = famRec(p);
+    if (r && r.img) { probe(r.img); if (imgState[r.img] !== 'bad') return r.img; }
+    return standInPicture(r && r.kind === 'robot' ? 'Robot' : 'Person', p.name);
+  }
+  const famThumb = p => `<span class="ico tall" style="border-color:${TYPES.Person.color}"><img src="${esc(famImg(p))}" alt=""></span>`;
+
   const KIND_TYPE = { person: 'Person', robot: 'Robot', place: 'Location', item: 'Evidence' };
   const KIND_GROUP = { person: 'People', robot: 'People', place: 'Places', item: 'Items' };
   const isTall = type => type === 'Person' || type === 'Robot';
@@ -471,6 +498,7 @@
         <form class="popover" id="arrowForm" hidden>
           <span class="caption">New arrow</span><span class="readout" id="arrowFormTitle"></span>
           <input class="field" id="arrowLabel" placeholder="What connects them? e.g. paid off, seen at" maxlength="40" autocomplete="off">
+          <div id="arrowHideWrap"></div>
           <div class="row"><button type="button" class="btn small" id="arrowCancel">Cancel</button><button class="btn small primary">Draw arrow</button></div>
         </form>
         <form class="popover" id="pinForm" hidden>
@@ -488,6 +516,7 @@
           </div>
           <label class="picfield" for="pinCase"><span class="kicker">Scenario</span><select class="field" id="pinCase"></select></label>
           <textarea class="field" id="pinNote" placeholder="Your team's first note (optional)"></textarea>
+          <div id="pinHideWrap"></div>
           <div class="row"><button type="button" class="btn small" id="pinCancel">Cancel</button><button class="btn small primary">Pin to board</button></div>
         </form>
         <aside class="drawer" id="drawer" hidden></aside>
@@ -627,7 +656,7 @@
   function notesHtml(i) {
     const ns = allNotesFor(i);
     if (!ns.length) return '<p class="empty">No notes yet. Be the first team to add one.</p>';
-    return ns.map(n => `<div class="note" style="--tc:${tColor(n.team)}"><span class="who"><span class="chip" style="background:${tColor(n.team)}">${esc(tName(n.team))}</span>${esc(n.by)} · ${ago(n.at)}${n.where !== i.caseId ? ` · in ${esc(caseOf(n.where).name)}` : ''}${(me.isGM || n.by === me.name) ? `<button class="del" data-delnote="${n.id}">Delete</button>` : ''}</span><p>${esc(n.text)}</p></div>`).join('');
+    return ns.map(n => `<div class="note" style="--tc:${tColor(n.team)}"><span class="who"><span class="chip" style="background:${tColor(n.team)}">${esc(tName(n.team))}</span>${esc(n.by)} · ${ago(n.at)}${n.where !== i.caseId ? ` · in ${esc(caseOf(n.where).name)}` : ''}${n.hidden ? ' ' + hiddenChip : ''}${me.isGM ? `<button class="del" data-shownote="${n.id}" data-on="${n.hidden ? 1 : 0}">${n.hidden ? 'Reveal' : 'Hide'}</button>` : ''}${(me.isGM || n.by === me.name) ? `<button class="del" data-delnote="${n.id}">Delete</button>` : ''}</span><p>${esc(n.text)}</p></div>`).join('');
   }
   function alsoHtml(i) {
     const cs = copiesOf(i);
@@ -684,16 +713,65 @@
       };
     }
   }
+  // GM: the "who can see this" switch at the top of a card, arrow or family person.
+  function gmShowHtml(hidden, prefix, what) {
+    if (!me.isGM) return '';
+    return `<section class="gm-reveal${hidden ? '' : ' on'}"><span class="caption">Players</span>
+      <p class="sub">${hidden ? 'Hidden - only you can see ' + what + '.' : 'Players can see ' + what + '.'}</p>
+      <button type="button" class="btn small${hidden ? ' primary' : ''}" id="${prefix}Show">${hidden ? 'Reveal to players' : 'Hide from players'}</button></section>`;
+  }
+  function wireShow(prefix, body) { const b = $(prefix + 'Show'); if (b) b.onclick = () => { b.disabled = true; op(body(b)).then(() => { b.disabled = false; }); }; }
+
+  // One person in a crime family: who they are, who they answer to, who answers to them. The GM
+  // also gets the reveal switch and an edit form.
+  function famPersonHtml(f, p, prefix) {
+    const rec = famRec(p);
+    const boss = f.people.find(x => x.id === p.reportsTo);
+    const crew = f.people.filter(x => x.reportsTo === p.id).sort(rankSort);
+    const text = [p.details, rec && rec.details].filter(Boolean).join('\n\n');
+    const go = x => `<button class="go" data-famgo="${x.id}">${esc(x.name)}</button> ${rankChip(x.rank)}${me.isGM && !famRevealed(x) ? ' ' + hiddenChip : ''}`;
+    let html = gmShowHtml(!famRevealed(p), prefix + 'Fam', 'them (a reveal shows them to the Judges and the Perps)');
+    html += `<div class="details"><div class="meta"><span class="src">${rec ? 'Case file' : 'Family file'}</span><span>${esc(rec ? (rec.sub || 'From M.A.C.') : f.name + ' family')}</span></div>
+      <p>${text ? esc(text) : '<span class="empty">No details yet.</span>'}</p></div>`;
+    html += `<section><span class="caption">Answers to</span>${boss ? `<div class="conn"><span class="arrow">↑</span><span>${go(boss)}</span></div>` : '<p class="empty">Nobody - top of the family.</p>'}</section>`;
+    html += `<section><span class="caption">Runs</span>${crew.length ? crew.map(x => `<div class="conn"><span class="arrow">↓</span><span>${go(x)}</span></div>`).join('') : '<p class="empty">Nobody under them.</p>'}</section>`;
+    if (me.isGM) {
+      const others = f.people.filter(x => x.id !== p.id).sort(rankSort);
+      html += `<form class="details" id="${prefix}FamEdit"><span class="caption">Edit (GM)</span>
+        <input class="field" name="name" value="${esc(p.name)}" maxlength="60" list="cbMacPeople" aria-label="Name">
+        <select class="field" name="rank" aria-label="Rank">${RANKS.map(r => `<option${r === p.rank ? ' selected' : ''}>${r}</option>`).join('')}</select>
+        <select class="field" name="reportsTo" aria-label="Answers to"><option value="">Answers to nobody</option>${others.map(x => `<option value="${x.id}"${x.id === p.reportsTo ? ' selected' : ''}>Answers to ${esc(x.name)} (${x.rank})</option>`).join('')}</select>
+        <textarea class="field" name="details" rows="3" placeholder="Family notes (players see these once revealed)">${esc(p.details || '')}</textarea>
+        <div class="card-tools"><button class="btn small primary">Save</button><button type="button" class="btn small danger" id="${prefix}FamRemove">Remove from family</button></div></form>`;
+    }
+    return html;
+  }
+  function wireFamPerson(f, p, prefix, goTo, after) {
+    document.querySelectorAll('#cb [data-famgo]').forEach(b => b.onclick = () => goTo(b.dataset.famgo));
+    wireShow(prefix + 'Fam', () => ({ op: 'gmFamShow', familyId: f.id, personId: p.id, board: 'both', on: !famRevealed(p) }));
+    const form = $(prefix + 'FamEdit');
+    if (form) form.onsubmit = e => { e.preventDefault(); if (document.activeElement) document.activeElement.blur();
+      op({ op: 'gmFamEditPerson', familyId: f.id, personId: p.id, name: form.elements.name.value, rank: form.elements.rank.value,
+        reportsTo: form.elements.reportsTo.value || null, details: form.elements.details.value }); };
+    const rm = $(prefix + 'FamRemove');
+    if (rm) rm.onclick = async () => { if (!armed(rm, 'Click again - their people move up to their boss')) return;
+      const ok = await op({ op: 'gmFamRemovePerson', familyId: f.id, personId: p.id }); if (ok && after) after(); };
+  }
+  const macPeopleList = () => `<datalist id="cbMacPeople">${RECORDS.filter(r => r.kind === 'person' || r.kind === 'robot').map(r => `<option value="${esc(r.name)}">`).join('')}</datalist>`;
+
   const canFlag = i => isTall(i.type) && !!myTeam();
   function flagsHtml(i, prefix) {
     if (!isTall(i.type)) return '';
     const set = flagsOf(i);
     if (!canFlag(i)) return set.length ? `<section><span class="caption">Status</span><div class="flag-row">${flagChips(i)}</div></section>` : '';
-    const who = f => (i.flagBy && i.flagBy[f.id]) ? ` title="${esc(f.on)} - set by ${esc(i.flagBy[f.id].by)}, ${ago(i.flagBy[f.id].at)}"` : ` title="Flag as ${esc(f.on.toLowerCase())}"`;
+    const who = f => set.includes(f)
+      ? ` title="${esc(f.on)}${i.flagBy && i.flagBy[f.id] ? ' - set by ' + esc(i.flagBy[f.id].by) + ', ' + ago(i.flagBy[f.id].at) : ''}. Click to clear."`
+      : ` title="Flag as ${esc(f.on.toLowerCase())}"`;
     return `<section><span class="caption">Status</span><div class="flag-row" id="${prefix}Flags">${FLAGS.map(f => {
       const on = set.includes(f);
-      return `<button type="button" class="flag-btn${on ? ' on' : ''}" data-flag="${f.id}" aria-pressed="${on}" style="--fb:${f.bg};--ff:${f.fg}"${who(f)}>${f.label}</button>`;
-    }).join('')}</div></section>`;
+      // A lit status shows an x: clicking it again clears it.
+      return `<button type="button" class="flag-btn${on ? ' on' : ''}" data-flag="${f.id}" aria-pressed="${on}" aria-label="${esc(f.label)}${on ? ' (on - click to clear)' : ''}" style="--fb:${f.bg};--ff:${f.fg}"${who(f)}>${f.label}${on ? '<span class="flag-x" aria-hidden="true">✕</span>' : ''}</button>`;
+    }).join('')}</div>${set.length ? '<p class="flag-hint">Click a lit status to clear it.</p>' : ''}</section>`;
   }
   function wireFlags(i, prefix) {
     const row = $(prefix + 'Flags');
@@ -722,6 +800,7 @@
     if (!myTeam()) return '';
     return `<form class="addnote" id="${prefix}NoteForm">
       <textarea class="field" id="${prefix}NoteText" placeholder="Add a note for ${esc(tName(myTeam()))}" required></textarea>
+      ${me.isGM ? gmHideToggle(prefix + 'NoteHide') : ''}
       <button class="btn primary" style="justify-self:end">Add note</button></form>`;
   }
   function wireNoteForm(prefix, itemId, container) {
@@ -732,9 +811,10 @@
       const t = ta.value.trim();
       if (!t) return;
       ta.blur();
-      const ok = await op({ op: 'addNote', itemId, text: t });
+      const ok = await op(Object.assign({ op: 'addNote', itemId, text: t }, me.isGM ? { hidden: readHide(prefix + 'NoteHide') } : {}));
       if (ok) { const again = $(prefix + 'NoteText'); if (again) again.value = ''; }
     };
+    container.querySelectorAll('[data-shownote]').forEach(b => b.onclick = () => op({ op: 'gmShowThing', kind: 'note', id: b.dataset.shownote, on: b.dataset.on === '1' }));
     container.querySelectorAll('[data-delnote]').forEach(b => b.onclick = () => {
       if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Sure?'; return; }
       op({ op: 'deleteNote', id: b.dataset.delnote });
@@ -922,12 +1002,63 @@
         <form class="gm-row" id="gmAddCase"><input class="field" id="gmNewCase" placeholder="New scenario, e.g. The Good Cheat" maxlength="60"><button class="btn small primary">Add</button></form></section>
       <section><span class="caption">Players</span><div class="gm-list">${players}</div></section>
       ${blocked}
+      <section><span class="caption">Hidden things</span>
+        <label class="toggle"><input type="checkbox" id="gmHideNew"${gmHideNew() ? ' checked' : ''}>New cards, arrows and notes I add start hidden</label>
+        <p class="sub hint">Hidden things are faded with a dashed frame and only you can see them. Reveal or hide anything from its card, arrow or note. ${(() => { const n = state.items.filter(i => i.hidden).length + state.links.filter(l => l.hidden).length + state.notes.filter(x => x.hidden).length; return n ? n + ' hidden on this board now.' : 'Nothing hidden on this board right now.'; })()}</p></section>
+      ${famGmHtml()}
       <section><span class="caption">Saving</span><ul class="gm-status">${status}</ul></section>`;
   }
+  // GM tools: crime families. Families are shared by both boards; people are added hidden and
+  // revealed one at a time (to the Judges and the Perps together).
+  function famGmHtml() {
+    const fams = families().map(f => {
+      const ppl = [...f.people].sort(rankSort);
+      return `<div class="gm-team" style="--tc:${f.color}">
+        <form class="gm-row team-head" data-famedit="${f.id}">
+          <input class="field" name="name" value="${esc(f.name)}" maxlength="60" aria-label="Family name">
+          <input type="color" name="color" value="${esc(f.color)}" aria-label="Family colour"><button class="btn small">Save</button></form>
+        <div class="gm-list">${ppl.length ? ppl.map(p => `<div class="gm-row three"><span class="who"><b>${esc(p.name)}</b><small>${esc(p.rank)} · ${famRevealed(p) ? 'revealed' : 'hidden'}</small></span>
+            <button type="button" class="btn small" data-famopen="${f.id}:${p.id}">Open</button>
+            <button type="button" class="btn small${famRevealed(p) ? '' : ' primary'}" data-famshow="${f.id}:${p.id}" data-on="${famRevealed(p) ? 0 : 1}">${famRevealed(p) ? 'Hide' : 'Reveal'}</button></div>`).join('')
+          : '<p class="empty">Nobody in this family yet.</p>'}</div>
+        <form class="gm-fam-add" data-famadd="${f.id}">
+          <input class="field" name="name" list="cbMacPeople" placeholder="Add someone (M.A.C. name or new)" maxlength="60" autocomplete="off">
+          <select class="field" name="rank" aria-label="Rank">${RANKS.map(r => `<option${r === 'Soldier' ? ' selected' : ''}>${r}</option>`).join('')}</select>
+          <select class="field" name="reportsTo" aria-label="Answers to"><option value="">Answers to nobody</option>${ppl.map(x => `<option value="${x.id}">Answers to ${esc(x.name)}</option>`).join('')}</select>
+          <button class="btn small primary">Add (hidden)</button></form>
+        <div class="card-tools"><button type="button" class="btn small danger" data-famdel="${f.id}">Delete family</button></div>
+      </div>`;
+    }).join('');
+    return `${macPeopleList()}<section><span class="caption">Crime families</span>
+      <p class="sub hint">Shown below the scenarios on both boards. Everyone you add starts hidden; reveal people one at a time and they appear for the Judges and the Perps.</p>
+      <div class="gm-list">${fams}</div>
+      <form class="gm-row" id="gmAddFam"><input class="field" name="name" placeholder="New family, e.g. Sinatra" maxlength="60"><input type="color" name="color" value="#c8913a" aria-label="Family colour"><button class="btn small primary">Add</button></form></section>`;
+  }
+  function wireFamGm(container) {
+    const hn = container.querySelector('#gmHideNew'); if (hn) hn.onchange = () => setGmHideNew(hn.checked);
+    const addF = container.querySelector('#gmAddFam');
+    if (addF) addF.onsubmit = async e => { e.preventDefault(); const v = addF.elements.name.value.trim(); if (!v) return; addF.elements.name.blur();
+      const ok = await op({ op: 'gmFamAdd', name: v, color: addF.elements.color.value }); if (ok) addF.elements.name.value = ''; };
+    container.querySelectorAll('[data-famedit]').forEach(f => f.onsubmit = e => { e.preventDefault(); if (document.activeElement) document.activeElement.blur();
+      op({ op: 'gmFamEdit', familyId: f.dataset.famedit, name: f.elements.name.value, color: f.elements.color.value }); });
+    container.querySelectorAll('[data-famdel]').forEach(b => b.onclick = () => { if (armed(b, 'Click again to delete the family and everyone in it')) op({ op: 'gmFamDelete', familyId: b.dataset.famdel }); });
+    container.querySelectorAll('[data-famadd]').forEach(f => f.onsubmit = async e => { e.preventDefault();
+      const v = f.elements.name.value.trim(); if (!v) return f.elements.name.focus();
+      if (document.activeElement) document.activeElement.blur();
+      const ok = await op({ op: 'gmFamAddPerson', familyId: f.dataset.famadd, name: v, rank: f.elements.rank.value, reportsTo: f.elements.reportsTo.value || null });
+      if (ok) { const again = container.querySelector(`[data-famadd="${f.dataset.famadd}"] input[name=name]`); if (again) { again.value = ''; again.focus(); } } });
+    container.querySelectorAll('[data-famshow]').forEach(b => b.onclick = () => { const [fid, pid] = b.dataset.famshow.split(':');
+      op({ op: 'gmFamShow', familyId: fid, personId: pid, board: 'both', on: b.dataset.on === '1' }); });
+    container.querySelectorAll('[data-famopen]').forEach(b => b.onclick = () => { const [fid, pid] = b.dataset.famopen.split(':');
+      if (mode === 'board') { const n = cy.getElementById('fm:' + fid + ':' + pid); select({ kind: 'fam', id: n.id(), fid, pid }); if (n.length) cy.animate({ center: { eles: n } }, { duration: 350 }); }
+      else { pView = 'fm:' + fid + ':' + pid; renderPanel(); $('pBody').scrollTop = 0; } });
+  }
+
   let gmSwitchScene = true;
   const showOnStream = target => op({ op: 'gmShow', target, switchScene: gmSwitchScene }).then(ok => { if (ok) announce('On stream now: ' + (target === 'all' ? 'the whole board' : 'your pick') + '.'); });
   function armed(b, text) { if (b.dataset.armed === '1') return true; b.dataset.armed = '1'; b.textContent = text; return false; }
   function wireGm(container) {
+    wireFamGm(container);
     const sw = container.querySelector('#gmSwitch');
     if (sw) sw.onchange = () => { gmSwitchScene = sw.checked; };
     container.querySelectorAll('[data-show]').forEach(b => b.onclick = () => showOnStream(b.dataset.show));
@@ -980,6 +1111,7 @@
       wireGm(pBody);
       return;
     }
+    if (pView && pView.startsWith('fm:')) { const [, fid, pid] = pView.split(':'); return renderPanelFam(fid, pid); }
     if (pView && item(pView)) return renderPanelDetail(item(pView));
     const q = $('pSearch').value.trim().toLowerCase();
     let html = noTeamHtml();
@@ -992,15 +1124,38 @@
       rows.forEach(i => {
         const n = allNotesFor(i).length, l = linksFor(i.id).length, also = copiesOf(i).length;
         html += `<button class="p-row" data-id="${i.id}">${thumb(i)}
-          <span><div class="name">${esc(i.name)}</div>${flagsOf(i).length ? `<div class="flag-row small">${flagChips(i)}</div>` : ''}<div class="sub">${esc(i.type)} · ${n} note${n === 1 ? '' : 's'} · ${l} link${l === 1 ? '' : 's'}${also ? ' · also in another scenario' : ''}${i.src === 'pending' ? ' · new lead' : ''}</div></span>
+          <span><div class="name">${esc(i.name)}${i.hidden ? ' ' + hiddenChip : ''}</div>${flagsOf(i).length ? `<div class="flag-row small">${flagChips(i)}</div>` : ''}<div class="sub">${esc(i.type)} · ${n} note${n === 1 ? '' : 's'} · ${l} link${l === 1 ? '' : 's'}${also ? ' · also in another scenario' : ''}${i.src === 'pending' ? ' · new lead' : ''}</div></span>
           <span class="dots">${teamsOn(i.id).map(t => dot(t, tName(t))).join('')}</span></button>`;
       });
       html += '</div>';
     });
-    if (!state.items.length) html += '<p class="empty" style="margin-top:14px">The board is empty. Add the first card.</p>';
+    families().forEach(f => {
+      const rows = f.people.filter(p => !q || p.name.toLowerCase().includes(q) || p.rank.toLowerCase().includes(q)).sort(rankSort);
+      if (!rows.length) return;
+      html += `<div class="p-case p-fam" style="--tc:${f.color}"><span class="kicker">Crime family</span><h2 class="caption">${esc(f.name)}</h2>`;
+      rows.forEach(p => {
+        const boss = f.people.find(x => x.id === p.reportsTo);
+        html += `<button class="p-row" data-fam="${f.id}:${p.id}">${famThumb(p)}
+          <span><div class="name">${esc(p.name)}${me.isGM && !famRevealed(p) ? ' ' + hiddenChip : ''}</div><div class="flag-row small">${rankChip(p.rank)}</div><div class="sub">${boss ? 'Answers to ' + esc(boss.name) : 'Top of the family'}</div></span></button>`;
+      });
+      html += '</div>';
+    });
+    if (!state.items.length && !families().length) html += '<p class="empty" style="margin-top:14px">The board is empty. Add the first card.</p>';
     else if (q && html === noTeamHtml()) html += `<p class="empty">Nothing on the board matches “${esc(q)}”.</p>`;
     pBody.innerHTML = html;
-    pBody.querySelectorAll('.p-row').forEach(b => b.onclick = () => { pView = b.dataset.id; renderPanel(); pBody.scrollTop = 0; });
+    pBody.querySelectorAll('.p-row').forEach(b => b.onclick = () => { pView = b.dataset.fam ? 'fm:' + b.dataset.fam : b.dataset.id; renderPanel(); pBody.scrollTop = 0; });
+  }
+  function renderPanelFam(fid, pid) {
+    const pBody = $('pBody');
+    const f = famById(fid), p = f && f.people.find(x => x.id === pid);
+    if (!p) { pView = null; return renderPanel(); }
+    pBody.innerHTML = `<div class="p-detail">
+      <button class="back" id="pBack">← All cards</button>
+      <div style="display:flex;gap:12px;align-items:center">${famThumb(p)}
+        <div style="min-width:0"><h3>${esc(p.name)}</h3><span class="kicker">${esc(f.name)} family</span><div class="flag-row small">${rankChip(p.rank)}${me.isGM && !famRevealed(p) ? hiddenChip : ''}</div></div></div>
+      ${macPeopleList()}${famPersonHtml(f, p, 'p')}</div>`;
+    $('pBack').onclick = () => { pView = null; renderPanel(); };
+    wireFamPerson(f, p, 'p', id => { pView = 'fm:' + f.id + ':' + id; renderPanel(); pBody.scrollTop = 0; }, () => { pView = null; renderPanel(); });
   }
   function renderPanelAdd() {
     const pBody = $('pBody');
@@ -1020,6 +1175,7 @@
            <label class="picfield" for="pImg"><span class="kicker">Picture (optional)</span><input type="file" id="pImg" accept="image/*"></label>`}
       <label class="picfield" for="pCase"><span class="kicker">Scenario</span><select class="field" id="pCase">${scenarioOptions(pAddCase || lastCase())}</select></label>
       <textarea class="field" id="pNote" placeholder="Your team's first note (optional)"></textarea>
+      ${me.isGM ? gmHideToggle('pHide') : ''}
       <button class="btn primary" style="justify-self:end">Add to board</button>
     </form>`;
     $('pBack').onclick = () => { pView = null; pAddCase = null; renderPanel(); };
@@ -1042,6 +1198,7 @@
         card = { src: 'player', name: $('pName').value.trim(), type: $('pType').value, details: $('pDetails').value.trim(), caseId, note };
         if (img) card.img = img;
       }
+      if (me.isGM) card.hidden = readHide('pHide');
       if (document.activeElement) document.activeElement.blur();
       const id = await createCard(card);
       if (id) { rememberCase(caseId); pView = id; pAddCase = null; renderPanel(); $('pBody').scrollTop = 0; }
@@ -1053,6 +1210,7 @@
       <button class="back" id="pBack">← All cards</button>
       <div style="display:flex;gap:12px;align-items:center">${thumb(i, true)}
         <div style="min-width:0"><h3>${esc(i.name)}</h3><span class="kicker">${esc(i.type)} · ${esc(caseOf(i.caseId).name)}</span></div></div>
+      ${gmShowHtml(!!i.hidden, 'pCard', 'this card, its arrows and notes')}
       ${flagsHtml(i, 'p')}
       ${detailsHtml(i, 'p')}
       ${alsoHtml(i)}
@@ -1067,6 +1225,7 @@
     wireNoteForm('p', i.id, pBody);
     wireDetails(i, 'p');
     wireFlags(i, 'p');
+    wireShow('pCard', () => ({ op: 'gmShowThing', kind: 'card', id: i.id, on: !!i.hidden }));
     wireCardTools(i, 'p', () => { pView = null; renderPanel(); });
   }
 
@@ -1091,17 +1250,68 @@
     });
     state.items.forEach(i => els.push({ group: 'nodes',
       data: { id: i.id, label: i.name, parent: i.caseId, color: TYPES[typeOf(i.type)].color, frame: holoFrame(TYPES[typeOf(i.type)].color), img: imgFor(i), tall: isTall(i.type) ? 1 : 0, lead: i.src === 'pending' ? 1 : 0,
+        // Always set, even when empty: cy.json() merges data into existing nodes, so a key left out
+        // would keep its old value and a cleared stamp would stay on the card until a refresh.
+        hiddenCard: i.hidden ? 1 : 0,
         ...(isTall(i.type) && flagsOf(i).length ? { flagged: 1, flagImg: flagOverlay(flagsOf(i).map(f => f.id), isTall(i.type)),
-          dead: i.flags.includes('dead') ? 1 : 0, apb: i.flags.includes('apb') ? 1 : 0 } : {}) },
+          dead: i.flags.includes('dead') ? 1 : 0, apb: i.flags.includes('apb') ? 1 : 0 } : { flagged: 0, flagImg: '', dead: 0, apb: 0 }) },
       position: { x: i.x, y: i.y } }));
     state.links.forEach(l => { if (item(l.from) && item(l.to)) els.push({ group: 'edges',
-      data: { id: l.id, source: l.from, target: l.to, label: l.label || '', color: tBeam(l.team), team: l.team } }); });
+      data: { id: l.id, source: l.from, target: l.to, label: l.label || '', color: tBeam(l.team), team: l.team, hiddenLink: l.hidden ? 1 : 0 } }); });
     const done = new Set();
     state.items.forEach(i => copiesOf(i).forEach(c => {
       const key = [i.id, c.id].sort().join('|');
       if (done.has(key)) return; done.add(key);
       els.push({ group: 'edges', data: { id: 'same:' + key, source: i.id, target: c.id, label: 'SAME', same: 1, color: '#050608' } });
     }));
+    return els.concat(familyElements());
+  }
+
+  // Crime families sit below the scenarios, one after another, each as rings: the Boss in the
+  // middle, the inner circle (Underboss, Consigliere, Capos) on the first ring and the street crew
+  // (Soldiers, Associates) on the outer ring, near whoever they answer to.
+  function familyElements() {
+    const els = [];
+    const fams = families().filter(f => f.people.length);
+    if (!fams.length) return els;
+    const xs = state.items.map(i => i.x), ys = state.items.map(i => i.y);
+    let left = xs.length ? Math.min(...xs) - 100 : 0;
+    const top = (ys.length ? Math.max(...ys) : 0) + 480;
+    const SX = 1.25;
+    fams.forEach(f => {
+      const ring = [[], [], []];
+      f.people.forEach(p => ring[RING[p.rank] === undefined ? 2 : RING[p.rank]].push(p));
+      const n1 = ring[1].length, n2 = ring[2].length;
+      const R1 = Math.max(190, n1 * 150 / (2 * Math.PI) / SX);
+      const R2 = Math.max(R1 + 190, n2 * 140 / (2 * Math.PI) / SX);
+      const cx = left + R2 * SX + 80, cy = top + R2 + 40;
+      const pos = {}, ang = {};
+      ring[0].sort(rankSort).forEach((p, k) => { pos[p.id] = { x: cx + (k - (ring[0].length - 1) / 2) * 130, y: cy }; });
+      ring[1].sort(rankSort).forEach((p, k) => {
+        const a = -Math.PI / 2 + (k + 0.5) * 2 * Math.PI / n1;
+        ang[p.id] = a; pos[p.id] = { x: cx + R1 * SX * Math.cos(a), y: cy + R1 * Math.sin(a) };
+      });
+      // Street crew: aim for the angle of the inner-circle boss above them, then share the ring out evenly.
+      const byId = new Map(f.people.map(p => [p.id, p]));
+      const aim = p => { let up = p.reportsTo, g = 0; while (up && g++ < 50) { if (ang[up] !== undefined) return ang[up]; const x = byId.get(up); up = x ? x.reportsTo : null; } return Math.PI / 2; };
+      const outer = ring[2].map(p => ({ p, t: aim(p) })).sort((a, b) => a.t - b.t || rankSort(a.p, b.p));
+      const step = n2 ? 2 * Math.PI / n2 : 0;
+      const start = n2 ? outer.reduce((sum, o, k) => sum + (o.t - k * step), 0) / n2 : 0;
+      outer.forEach((o, k) => { const a = start + k * step; pos[o.p.id] = { x: cx + R2 * SX * Math.cos(a), y: cy + R2 * Math.sin(a) }; });
+
+      const fid = 'fam:' + f.id;
+      els.push({ group: 'nodes', data: { id: fid, label: f.name.toUpperCase() + ' FAMILY', isFam: 1, famPart: 1, tc: f.color } });
+      els.push({ group: 'nodes', data: { id: 'ring2:' + f.id, parent: fid, ring: 1, outer: 1, label: n2 ? 'THE STREET' : '', w: R2 * SX * 2 + 150, h: R2 * 2 + 150, tc: f.color, famPart: 1 }, position: { x: cx, y: cy } });
+      els.push({ group: 'nodes', data: { id: 'ring1:' + f.id, parent: fid, ring: 1, label: 'INNER CIRCLE', w: R1 * SX * 2 + 130, h: R1 * 2 + 130, tc: f.color, famPart: 1 }, position: { x: cx, y: cy } });
+      f.people.forEach(p => els.push({ group: 'nodes', position: pos[p.id],
+        data: { id: 'fm:' + f.id + ':' + p.id, fid: f.id, pid: p.id, parent: fid, famPart: 1, famPerson: 1, label: p.name + '\n' + p.rank.toUpperCase(),
+          color: f.color, frame: holoFrame(f.color), img: famImg(p), tall: 1, lead: 0, hiddenCard: famRevealed(p) ? 0 : 1,
+          flagged: 0, flagImg: '', dead: 0, apb: 0 } }));
+      f.people.forEach(p => { if (p.reportsTo && byId.has(p.reportsTo)) els.push({ group: 'edges',
+        data: { id: 'fe:' + f.id + ':' + p.id, source: 'fm:' + f.id + ':' + p.reportsTo, target: 'fm:' + f.id + ':' + p.id, famLink: 1, color: f.color, label: '',
+          hiddenLink: famRevealed(p) && famRevealed(byId.get(p.reportsTo)) ? 0 : 1 } }); });
+      left += R2 * SX * 2 + 320;
+    });
     return els;
   }
 
@@ -1151,6 +1361,24 @@
         { selector: 'node[?flagged][?tall]', style: { 'background-position-y': '0% 50%' } },
         { selector: 'node[?dead]', style: { 'background-image-opacity': '0.5 1' } },
         { selector: 'node[?apb]', style: { 'underlay-color': '#ff2a2a', 'underlay-opacity': 0.4 } },
+        // Hidden from players (only the GM ever receives these): faded with a dashed frame.
+        { selector: 'node[?hiddenCard]', style: { 'opacity': 0.5, 'border-style': 'dashed', 'outline-opacity': 0.15 } },
+        { selector: 'edge[?hiddenLink]', style: { 'line-style': 'dashed', 'opacity': 0.5 } },
+        // Crime families: a frame in the family colour, and the darker rings behind the people.
+        { selector: 'node[?isFam]', style: {
+          'shape': 'round-rectangle', 'background-color': '#120a02', 'background-opacity': 0.3, 'background-image': 'none',
+          'border-width': 3, 'border-color': 'data(tc)', 'border-opacity': 0.9, 'outline-width': 0, 'underlay-color': 'data(tc)', 'underlay-opacity': 0.08, 'underlay-padding': 10,
+          'label': 'data(label)', 'text-valign': 'top', 'text-halign': 'center', 'text-margin-y': -10, 'color': '#ffe6b8',
+          'font-family': '"Black Ops One", Impact, sans-serif', 'font-size': 26, 'font-weight': 400, 'text-transform': 'none',
+          'text-background-color': '#140c03', 'text-background-opacity': 0.9, 'text-background-padding': 10, 'text-background-shape': 'round-rectangle',
+          'text-border-width': 2, 'text-border-color': 'data(tc)', 'text-border-opacity': 1, 'text-wrap': 'none', 'padding': 50 } },
+        { selector: 'node[?ring]', style: {
+          'shape': 'ellipse', 'width': 'data(w)', 'height': 'data(h)', 'background-color': '#01030a', 'background-opacity': 0.55, 'background-image': 'none',
+          'border-width': 2, 'border-style': 'dashed', 'border-color': 'data(tc)', 'border-opacity': 0.55, 'outline-width': 0, 'underlay-opacity': 0,
+          'label': 'data(label)', 'text-valign': 'top', 'text-margin-y': 30, 'color': '#ffd21f', 'font-family': 'Share Tech Mono, monospace',
+          'font-size': 14, 'font-weight': 400, 'text-background-opacity': 0, 'events': 'no', 'z-compound-depth': 'bottom' } },
+        { selector: 'node[?ring][?outer]', style: { 'background-opacity': 0.72 } },
+        { selector: 'node[?famPerson]', style: { 'text-wrap': 'wrap', 'line-height': 1.05 } },
         { selector: 'node[?lead]', style: { 'border-style': 'dashed', 'border-color': yellow, 'outline-color': yellow, 'underlay-color': yellow, 'underlay-opacity': 0.12 } },
         { selector: 'node[?isCase]', style: {
           'background-color': '#0a6ea8', 'background-opacity': 0.07, 'background-image': 'none',
@@ -1180,6 +1408,9 @@
         { selector: 'edge[?same]', style: { 'line-color': readout, 'line-opacity': 0.5, 'line-style': 'dashed', 'line-dash-pattern': [8, 8], 'width': 1.5,
           'underlay-opacity': 0, 'target-arrow-shape': 'none', 'color': '#aef8ff', 'text-background-opacity': 0.3, 'text-border-color': readout, 'font-size': 11 } },
         { selector: '.hiddenTeam', style: { 'display': 'none' } },
+        // Family lines: plain lines in the family colour (after the main edge style so it wins).
+        { selector: 'edge[?famLink]', style: { 'width': 2.5, 'line-color': 'data(color)', 'target-arrow-shape': 'none', 'source-arrow-shape': 'none', 'curve-style': 'straight', 'underlay-opacity': 0, 'label': '', 'line-opacity': 0.85 } },
+        { selector: 'edge[?famLink][?hiddenLink]', style: { 'line-style': 'dashed', 'opacity': 0.4 } },
         { selector: '.faded', style: { 'opacity': 0.08 } },
         { selector: 'node.sel', style: { 'border-color': '#e9ffff', 'border-width': 3, 'outline-width': 2, 'outline-opacity': 1, 'underlay-opacity': 0.4, 'underlay-padding': 22 } },
         { selector: 'edge.sel', style: { 'width': 4, 'underlay-opacity': 0.6 } },
@@ -1200,7 +1431,8 @@
 
     cy.on('tap', 'node', e => {
       const n = e.target;
-      if (n.data('isCase')) return;
+      if (n.data('isCase') || n.data('isFam') || n.data('ring')) return;
+      if (n.data('famPerson')) { if (arrowMode) return; return select({ kind: 'fam', id: n.id(), fid: n.data('fid'), pid: n.data('pid') }); }
       if (arrowMode) return pickForArrow(n.id());
       select({ kind: 'item', id: n.id() });
     });
@@ -1215,6 +1447,7 @@
       if (moves.length) op({ op: 'move', moves });
     });
     cy.nodes('[?isTag]').ungrabify();
+    cy.nodes('[?famPart]').ungrabify();
     cy.on('position', 'node', e => { if (!e.target.data('isTag')) placeTagsSoon(); });
     placeTags();
     applyTeamFilter();
@@ -1261,6 +1494,7 @@
     if (dragging) return; // never yank a card out from under someone's mouse
     cy.json({ elements: elements() });
     cy.nodes('[?isTag]').ungrabify();
+    cy.nodes('[?famPart]').ungrabify();
     cy.elements().removeClass('faded sel source');
     if (arrowMode && arrowFrom) cy.getElementById(arrowFrom).addClass('source');
     applyTeamFilter();
@@ -1279,7 +1513,9 @@
     const el = cy.getElementById(selected.id);
     if (!el.length) return;
     el.addClass('sel');
-    const keep = selected.kind === 'item'
+    const keep = selected.kind === 'fam'
+      ? el.closedNeighborhood().union(el.parent()).union(cy.nodes('[?ring]'))
+      : selected.kind === 'item'
       ? el.closedNeighborhood().filter(x => !x.hasClass('hiddenTeam')).union(el.closedNeighborhood().nodes().parents())
       : el.union(el.connectedNodes()).union(el.connectedNodes().parents());
     cy.elements().not(keep).addClass('faded');
@@ -1296,6 +1532,18 @@
       drawer.innerHTML = `<header><button class="x" id="dClose" aria-label="Close">×</button><span class="kicker">Only you can see this</span><h2>GM tools</h2></header>
         <div class="scroll">${gmHtml()}</div>`;
       wireGm(drawer);
+    } else if (selected.kind === 'fam') {
+      const f = famById(selected.fid), p = f && f.people.find(x => x.id === selected.pid);
+      if (!p) { drawer.hidden = true; selected = null; return; }
+      drawer.innerHTML = `<header>
+          <button class="x" id="dClose" aria-label="Close">×</button>
+          <span class="kicker">${esc(f.name)} family · ${esc(p.rank)}</span>
+          <h2>${esc(p.name)}</h2>
+          ${me.isGM && !famRevealed(p) ? hiddenChip : ''}
+        </header>
+        <div class="scroll">${macPeopleList()}${famPersonHtml(f, p, 'd')}</div>`;
+      wireFamPerson(f, p, 'd', pid => { const n = cy.getElementById('fm:' + f.id + ':' + pid); select({ kind: 'fam', id: n.id(), fid: f.id, pid });
+        if (n.length) cy.animate({ center: { eles: n } }, { duration: 350 }); }, () => select(null));
     } else if (selected.kind === 'item') {
       const i = item(selected.id);
       if (!i) { drawer.hidden = true; selected = null; return; }
@@ -1306,6 +1554,7 @@
           <span class="kicker">${esc(caseOf(i.caseId).name)}</span>
         </header>
         <div class="scroll">
+          ${gmShowHtml(!!i.hidden, 'dCard', 'this card, its arrows and notes')}
           ${flagsHtml(i, 'd')}
           ${detailsHtml(i, 'd')}
           ${alsoHtml(i)}
@@ -1321,6 +1570,7 @@
       wireNoteForm('d', i.id, drawer);
       wireDetails(i, 'd');
       wireFlags(i, 'd');
+      wireShow('dCard', () => ({ op: 'gmShowThing', kind: 'card', id: i.id, on: !!i.hidden }));
       wireCardTools(i, 'd', () => select(null));
     } else {
       const l = state.links.find(x => x.id === selected.id);
@@ -1335,11 +1585,13 @@
           <section><span class="kicker">Ends</span>
             <div class="conn"><span class="arrow">from</span><button class="go" data-go="${l.from}">${esc(item(l.from).name)}</button></div>
             <div class="conn"><span class="arrow">to</span><button class="go" data-go="${l.to}">${esc(item(l.to).name)}</button></div></section>
+          ${gmShowHtml(!!l.hidden, 'dLink', 'this arrow')}
           ${canChange(l) ? '<button class="btn danger" id="dDel" style="justify-self:start">Remove this arrow</button>'
                  : `<p class="empty" style="margin:0">Only ${esc(tName(l.team))} or the GM can remove this arrow.</p>`}
         </div>`;
       drawer.querySelectorAll('[data-go]').forEach(b => b.onclick = () => flyTo(b.dataset.go));
       if ($('dDel')) $('dDel').onclick = async () => { const ok = await op({ op: 'deleteLink', id: l.id }); if (ok) select(null); };
+      wireShow('dLink', () => ({ op: 'gmShowThing', kind: 'link', id: l.id, on: !!l.hidden }));
     }
     $('dClose').onclick = () => select(null);
   }
@@ -1395,6 +1647,7 @@
     $('arrowFormTitle').textContent = `${item(arrowFrom).name} → ${item(arrowTo).name}`;
     $('arrowForm').hidden = false;
     $('arrowLabel').value = '';
+    $('arrowHideWrap').innerHTML = me.isGM ? gmHideToggle('arrowHide') : '';
     $('arrowLabel').focus();
   }
 
@@ -1418,7 +1671,7 @@
       const from = arrowFrom, to = arrowTo, label = $('arrowLabel').value.trim();
       $('arrowLabel').blur();
       endArrow();
-      const res = await op({ op: 'addLink', from, to, label });
+      const res = await op(Object.assign({ op: 'addLink', from, to, label }, me.isGM ? { hidden: readHide('arrowHide') } : {}));
       if (res) { const l = res.board.links[res.board.links.length - 1]; if (l) select({ kind: 'link', id: l.id }); }
     };
 
@@ -1445,6 +1698,7 @@
         pinType.innerHTML = CARD_TYPES.map(t => `<option${t === 'Evidence' ? ' selected' : ''}>${t}</option>`).join('');
         pinCase.innerHTML = scenarioOptions(lastCase());
         pinCombo.reset(); setPinSrc('record');
+        $('pinHideWrap').innerHTML = me.isGM ? gmHideToggle('pinHide') : '';
         pinCombo.focus();
       }
     };
@@ -1463,6 +1717,7 @@
         card = { src: 'player', name: $('pinName').value.trim(), type: pinType.value, details: $('pinDetails').value.trim(), caseId, note };
         if (img) card.img = img;
       }
+      if (me.isGM) card.hidden = readHide('pinHide');
       if (document.activeElement) document.activeElement.blur();
       const id = await createCard(card);
       if (id) { rememberCase(caseId); pinForm.hidden = true; showNewCard(id); }
