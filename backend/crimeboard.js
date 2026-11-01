@@ -13,6 +13,13 @@
 //   They share one M.A.C. list (people/places/items), which Streamer.bot pushes to
 //   /api/crimeboard/catalog and is saved as crimeboard/catalog.json. The broadcaster is GM on both.
 //
+// HIDDEN CARDS AND CRIME FAMILIES (2026-11-01)
+//   The GM can add a card hidden ("hidden": true): players don't see it, its arrows or its notes
+//   until the GM reveals it. Crime families are org charts (Boss down to Associates) kept ONCE for
+//   both boards in crimeboard/families.json; only the GM edits them, and every person in a family
+//   is revealed per board (Judges, Perps, or both). Players only ever receive what's been revealed
+//   to their board - hidden things never leave the server for them.
+//
 // WHO CAN USE IT
 //   Crime Board: a Judges-group member or anyone with a Judge character assigned.
 //   Perps' Crime Board: anyone with a Perp character assigned.
@@ -111,7 +118,44 @@ const BOARDS = {
 };
 
 // The M.A.C. list both boards draw from. The Crime Board loads, saves and receives it.
-const shared = { catalog: { version: 0, updatedAt: null, records: [] }, recIndex: new Map(), boards: [] };
+const shared = { catalog: { version: 0, updatedAt: null, records: [] }, recIndex: new Map(), boards: [],
+    families: { v: 1, families: [] } };
+
+// Crime family ranks, top to bottom.
+const RANKS = ['Boss', 'Underboss', 'Consigliere', 'Capo', 'Soldier', 'Associate'];
+const FAM_LIMITS = { families: 30, people: 80, name: 60, details: 2000 };
+const FAMILIES_FILE = './crimeboard-families.json';
+
+function normalizeFamilies(f) {
+    const out = { v: 1, families: [] };
+    if (!f || !Array.isArray(f.families)) return out;
+    out.families = f.families.filter(x => x && x.id).map(x => ({
+        id: String(x.id), name: clip(x.name, FAM_LIMITS.name) || 'Unnamed family', color: isColor(x.color) ? x.color : '#b8862b',
+        people: (Array.isArray(x.people) ? x.people : []).filter(p => p && p.id).map(p => ({
+            id: String(p.id), name: clip(p.name, FAM_LIMITS.name) || 'Unknown', rank: RANKS.includes(p.rank) ? p.rank : 'Associate',
+            reportsTo: p.reportsTo ? String(p.reportsTo) : null, details: clip(p.details, FAM_LIMITS.details),
+            show: { crime: !!(p.show && p.show.crime), market: !!(p.show && p.show.market) }
+        }))
+    }));
+    return out;
+}
+
+// What one board's players may see: only revealed people, and "reports to" skips over anyone
+// still hidden (it points at the nearest revealed boss above them, or nobody).
+function familiesFor(key, isGM) {
+    const all = shared.families.families;
+    if (isGM) return all;
+    return all.map(f => {
+        const byId = new Map(f.people.map(p => [p.id, p]));
+        const seen = p => p.show[key];
+        const people = f.people.filter(seen).map(p => {
+            let up = p.reportsTo, guard = 0;
+            while (up && byId.has(up) && !seen(byId.get(up)) && guard++ < 100) up = byId.get(up).reportsTo;
+            return { id: p.id, name: p.name, rank: p.rank, details: p.details, reportsTo: up && byId.has(up) ? up : null };
+        });
+        return people.length ? { id: f.id, name: f.name, color: f.color, people } : null;
+    }).filter(Boolean);
+}
 
 const LIMITS = { name: 60, details: 3000, note: 1500, label: 40, caseName: 60, teamName: 40, member: 60, members: 40, teams: 12,
     cases: 40, img: 220000, items: 800, links: 2000, notes: 5000, events: 30, players: 200 };
@@ -254,7 +298,7 @@ function mountBoard(app, deps, cfg) {
 
     let board = null;
     let loadState = 'loading';           // loading | ready | failed
-    let ghBoardSha = null, ghCatalogSha = null;
+    let ghBoardSha = null, ghCatalogSha = null, ghFamiliesSha = null;
     let lastSnapshotDay = null, lastSavedAt = null, freshEmpty = false;
     let loggedChannel = false;
 
@@ -327,7 +371,9 @@ function mountBoard(app, deps, cfg) {
     async function load() {
         if (GH.token) {
             try {
-                const [b, c] = await Promise.all([ghRead(DIR + '/board.json'), cfg.ownsCatalog ? ghRead('crimeboard/catalog.json') : null]);
+                const [b, c, fm] = await Promise.all([ghRead(DIR + '/board.json'), cfg.ownsCatalog ? ghRead('crimeboard/catalog.json') : null,
+                    cfg.ownsCatalog ? ghRead('crimeboard/families.json') : null]);
+                if (cfg.ownsCatalog) { if (fm) { shared.families = normalizeFamilies(fm.data); ghFamiliesSha = fm.sha; } else shared.families = normalizeFamilies(readLocal(FAMILIES_FILE)); }
                 if (b) { board = normalize(b.data, cfg); ghBoardSha = b.sha; }
                 else { const local = readLocal(BOARD_FILE); board = local ? normalize(local, cfg) : emptyBoard(cfg); freshEmpty = !local; }
                 if (cfg.ownsCatalog) { if (c) { shared.catalog = c.data; ghCatalogSha = c.sha; } else shared.catalog = readLocal(CATALOG_FILE) || shared.catalog; }
@@ -344,16 +390,17 @@ function mountBoard(app, deps, cfg) {
             const local = readLocal(BOARD_FILE);
             board = local ? normalize(local, cfg) : emptyBoard(cfg);
             freshEmpty = !local;
-            if (cfg.ownsCatalog) shared.catalog = readLocal(CATALOG_FILE) || shared.catalog;
+            if (cfg.ownsCatalog) { shared.catalog = readLocal(CATALOG_FILE) || shared.catalog; shared.families = normalizeFamilies(readLocal(FAMILIES_FILE)); }
             loadState = 'ready';
         }
         if (cfg.ownsCatalog) { reindex(); shared.boards.forEach(x => x.syncLeads()); } else syncLeads();
     }
 
     // Saves are batched: at most one GitHub write per 15 seconds, always of the latest board.
-    let saveTimer = null, saving = false, dirtyBoard = false, dirtyCatalog = false;
+    let saveTimer = null, saving = false, dirtyBoard = false, dirtyCatalog = false, dirtyFamilies = false;
     function scheduleSave(what) {
         if (what === 'catalog') { dirtyCatalog = true; writeLocal(CATALOG_FILE, shared.catalog); }
+        else if (what === 'families') { dirtyFamilies = true; writeLocal(FAMILIES_FILE, shared.families); }
         else { dirtyBoard = true; writeLocal(BOARD_FILE, board); }
         if (!GH.token || saveTimer) return;
         saveTimer = setTimeout(flush, 15000);
@@ -377,9 +424,11 @@ function mountBoard(app, deps, cfg) {
                 }
             }
             if (dirtyCatalog) { dirtyCatalog = false; ghCatalogSha = await ghWrite('crimeboard/catalog.json', shared.catalog, ghCatalogSha, 'M.A.C. catalog v' + shared.catalog.version); }
+            if (dirtyFamilies) { dirtyFamilies = false; ghFamiliesSha = await ghWrite('crimeboard/families.json', shared.families, ghFamiliesSha, 'Crime families save'); }
         } catch (e) {
             console.warn(LOG + ': GitHub save failed, will retry - ' + e.message);
             dirtyBoard = true;
+            if (cfg.ownsCatalog) dirtyFamilies = true;
             saveTimer = setTimeout(flush, 30000);
         } finally { saving = false; }
     }
@@ -389,9 +438,9 @@ function mountBoard(app, deps, cfg) {
         if (!GH.token || !board) return;
         if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
         for (let i = 0; i < 40 && saving; i++) await new Promise(r => setTimeout(r, 250));
-        if (dirtyBoard || dirtyCatalog) await flush();
+        if (dirtyBoard || dirtyCatalog || dirtyFamilies) await flush();
         if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-        if (dirtyBoard || dirtyCatalog) throw new Error(LOG + ' could not reach GitHub');
+        if (dirtyBoard || dirtyCatalog || dirtyFamilies) throw new Error(LOG + ' could not reach GitHub');
     }
 
     const changed = () => { board.rev = (board.rev || 0) + 1; freshEmpty = false; scheduleSave('board'); };
@@ -405,6 +454,7 @@ function mountBoard(app, deps, cfg) {
         if (!board) return;
         const recIndex = shared.recIndex;
         const linked = [];
+        let hiddenLinked = false;
         board.items.forEach(i => {
             if (i.src !== 'pending') return;
             const r = recIndex.get(nameKey(i.name));
@@ -412,8 +462,9 @@ function mountBoard(app, deps, cfg) {
             if (i.details) board.notes.push({ id: newId('n'), itemId: i.id, team: i.team, by: i.editedBy || 'Player', at: i.editedAt || Date.now(),
                 text: 'Our description before the case file arrived: ' + i.details });
             i.src = 'record'; i.name = r.name; i.type = KIND_TYPE[r.kind]; i.details = ''; delete i.img;
-            linked.push(r.name);
+            if (!i.hidden) linked.push(r.name); else hiddenLinked = true;
         });
+        if (hiddenLinked && !linked.length) changed();
         if (linked.length) {
             event('The GM added ' + (linked.length === 1 ? 'a case file' : linked.length + ' case files') + ' for ' + linked.join(', ') + '. The board has updated.');
             changed();
@@ -481,10 +532,17 @@ function mountBoard(app, deps, cfg) {
     }
 
     // What the panel sees. Player IDs and the blocked list stay on the server.
-    function publicBoard() {
+    // Players never receive hidden cards, or the arrows and notes on them; the GM gets everything.
+    function publicBoard(isGM) {
         const players = Object.values(board.players).map(p => ({ name: displayName(p), team: teamOf(p) }));
-        const out = Object.assign({}, board, { players });
+        const out = Object.assign({}, board, { players, families: familiesFor(cfg.key, !!isGM) });
         delete out.blocked;
+        if (!isGM) {
+            const hidden = new Set(board.items.filter(i => i.hidden).map(i => i.id));
+            out.items = board.items.filter(i => !hidden.has(i.id));
+            out.links = board.links.filter(l => !l.hidden && !hidden.has(l.from) && !hidden.has(l.to));
+            out.notes = board.notes.filter(n => !n.hidden && !hidden.has(n.itemId));
+        }
         return out;
     }
     function gmView() {
@@ -548,7 +606,8 @@ function mountBoard(app, deps, cfg) {
     // The whole board including private parts, for the PC backup copy.
     app.get(BASE + '/backup', pushOnly, ready, (req, res) => {
         res.set('Cache-Control', 'no-store');
-        res.json({ persistent: !!GH.token, freshEmpty, rev: board.rev, items: board.items.length, savedAt: new Date().toISOString(), board });
+        res.json({ persistent: !!GH.token, freshEmpty, rev: board.rev, items: board.items.length, savedAt: new Date().toISOString(), board,
+            families: cfg.ownsCatalog ? shared.families : undefined });
     });
 
     // Puts a backup back. The board being replaced is saved to GitHub's backups folder first.
@@ -583,7 +642,7 @@ function mountBoard(app, deps, cfg) {
         res.set('Cache-Control', 'no-store');
         if (!OBS_KEY || !secretOk(String(req.query.key || ''), OBS_KEY)) return res.status(401).json({ error: 'bad_key', message: 'Check the key in the OBS browser source URL.' });
         const out = { rev: board.rev, cat: shared.catalog.version, focus: board.obsFocus };
-        if (String(req.query.rev) !== String(board.rev)) out.board = publicBoard();
+        if (String(req.query.rev) !== String(board.rev)) out.board = publicBoard(false);
         if (String(req.query.cat) !== String(shared.catalog.version)) out.catalog = shared.catalog.records;
         res.json(out);
     });
@@ -601,7 +660,7 @@ function mountBoard(app, deps, cfg) {
             rev: board.rev,
             cat: shared.catalog.version
         };
-        if (String(req.query.rev) !== String(board.rev)) out.board = publicBoard();
+        if (String(req.query.rev) !== String(board.rev)) out.board = publicBoard(id.isGM);
         if (String(req.query.cat) !== String(shared.catalog.version)) out.catalog = shared.catalog.records;
         if (id.isGM) out.gm = gmView();
         res.json(out);
@@ -617,7 +676,8 @@ function mountBoard(app, deps, cfg) {
         const b = req.body || {};
         const op = String(b.op || '');
         const fail = (msg, code) => res.status(code || 400).json({ error: 'rejected', message: msg });
-        const item = iid => board.items.find(i => i.id === iid);
+        // Hidden cards don't exist as far as players are concerned.
+        const item = iid => board.items.find(i => i.id === iid && (id.isGM || !i.hidden));
         const recIndex = shared.recIndex;
         const caseExists = cid => board.cases.some(c => c.id === cid);
         const teamLabel = tid => (teamById(tid) || board.retiredTeams[tid] || { name: tid === 'GM' ? 'GM' : 'that team' }).name;
@@ -645,12 +705,13 @@ function mountBoard(app, deps, cfg) {
                     card = { src: 'player', name, type: CARD_TYPES.includes(b.type) ? b.type : 'Evidence', details: clip(b.details, LIMITS.details), editedBy: by, editedAt: Date.now() };
                     const img = cleanImg(b.img); if (img) card.img = img;
                 }
+                if (id.isGM && b.hidden === true) card.hidden = true;
                 Object.assign(card, { id: newId('i'), caseId: b.caseId, team, by, x: isNum(b.x) ? Math.round(b.x) : 0, y: isNum(b.y) ? Math.round(b.y) : 0 });
                 board.items.push(card);
                 const note = clip(b.note, LIMITS.note);
-                if (note) board.notes.push({ id: newId('n'), itemId: card.id, team, by, at: Date.now(), text: note });
+                if (note) board.notes.push({ id: newId('n'), itemId: card.id, team, by, at: Date.now(), text: note });  // shows when the card does
                 changed();
-                return res.json({ ok: true, id: card.id, rev: board.rev, board: publicBoard() });
+                return res.json({ ok: true, id: card.id, rev: board.rev, board: publicBoard(id.isGM) });
             }
             case 'editCard': {
                 const i = item(b.id);
@@ -691,12 +752,13 @@ function mountBoard(app, deps, cfg) {
             case 'addLink': {
                 if (board.links.length >= LIMITS.links) return fail('The board has too many arrows.');
                 if (!item(b.from) || !item(b.to) || b.from === b.to) return fail('Pick two different cards.');
-                board.links.push({ id: newId('l'), from: b.from, to: b.to, label: clip(b.label, LIMITS.label), team, by, at: Date.now() });
+                board.links.push(Object.assign({ id: newId('l'), from: b.from, to: b.to, label: clip(b.label, LIMITS.label), team, by, at: Date.now() },
+                    id.isGM && b.hidden === true ? { hidden: true } : {}));
                 changed();
                 break;
             }
             case 'deleteLink': {
-                const l = board.links.find(x => x.id === b.id);
+                const l = board.links.find(x => x.id === b.id && (id.isGM || !x.hidden));
                 if (!l) break;
                 if (!id.isGM && l.team !== team) return fail('Only the ' + teamLabel(l.team) + ' or the GM can remove this arrow.');
                 board.links = board.links.filter(x => x.id !== l.id);
@@ -707,7 +769,8 @@ function mountBoard(app, deps, cfg) {
                 if (board.notes.length >= LIMITS.notes) return fail('The board has too many notes.');
                 const text = clip(b.text, LIMITS.note);
                 if (!item(b.itemId) || !text) return fail('Write something first.');
-                board.notes.push({ id: newId('n'), itemId: b.itemId, team, by, at: Date.now(), text });
+                board.notes.push(Object.assign({ id: newId('n'), itemId: b.itemId, team, by, at: Date.now(), text },
+                    id.isGM && b.hidden === true ? { hidden: true } : {}));
                 changed();
                 break;
             }
@@ -728,12 +791,12 @@ function mountBoard(app, deps, cfg) {
                     x.flagBy = Object.assign({}, x.flagBy);
                     if (on) x.flagBy[flag] = { by, at: Date.now() }; else delete x.flagBy[flag];
                 });
-                if (on) event(by + ' flagged ' + i.name + (flag === 'apb' ? ': APB out.' : flag === 'investigate' ? ' for investigation.' : ' as ' + FLAGS[flag] + '.'));
+                if (on && !i.hidden) event(by + ' flagged ' + i.name + (flag === 'apb' ? ': APB out.' : flag === 'investigate' ? ' for investigation.' : ' as ' + FLAGS[flag] + '.'));
                 changed();
                 break;
             }
             case 'deleteNote': {
-                const n = board.notes.find(x => x.id === b.id);
+                const n = board.notes.find(x => x.id === b.id && (id.isGM || !x.hidden));
                 if (!n) break;
                 if (!id.isGM && n.by !== by) return fail('Only ' + n.by + ' or the GM can delete this note.');
                 board.notes = board.notes.filter(x => x.id !== n.id);
@@ -748,8 +811,93 @@ function mountBoard(app, deps, cfg) {
                 changed();
             }
         }
-        res.json({ ok: true, rev: board.rev, board: publicBoard(), gm: id.isGM ? gmView() : undefined });
+        res.json({ ok: true, rev: board.rev, board: publicBoard(id.isGM), gm: id.isGM ? gmView() : undefined });
     });
+
+    // Crime family changes. Returns an error message, or nothing when the change was made.
+    function famOp(b) {
+        const fams = shared.families.families;
+        const fam = () => fams.find(f => f.id === b.familyId);
+        const person = f => f && f.people.find(p => p.id === b.personId);
+        const boards = b.board === 'both' ? ['crime', 'market'] : ['crime', 'market'].includes(b.board) ? [b.board] : null;
+        switch (b.op) {
+            case 'gmFamAdd': {
+                const name = clip(b.name, FAM_LIMITS.name); if (!name) return 'Name the family.';
+                if (fams.length >= FAM_LIMITS.families) return 'That\'s a lot of families - delete an old one first.';
+                fams.push({ id: newId('f'), name, color: isColor(b.color) ? b.color : '#b8862b', people: [] });
+                return;
+            }
+            case 'gmFamEdit': {
+                const f = fam(); if (!f) return 'That family has gone.';
+                const name = clip(b.name, FAM_LIMITS.name); if (name) f.name = name;
+                if (isColor(b.color)) f.color = b.color;
+                return;
+            }
+            case 'gmFamDelete': {
+                const i = fams.findIndex(f => f.id === b.familyId); if (i < 0) return;
+                fams.splice(i, 1); return;
+            }
+            case 'gmFamAddPerson': {
+                const f = fam(); if (!f) return 'That family has gone.';
+                const name = clip(b.name, FAM_LIMITS.name); if (!name) return 'Type a name.';
+                if (f.people.length >= FAM_LIMITS.people) return 'That family is full.';
+                const rec = shared.recIndex.get(nameKey(name));
+                const boss = f.people.find(p => p.id === b.reportsTo);
+                // New people start hidden from everyone.
+                f.people.push({ id: newId('m'), name: rec ? rec.name : name, rank: RANKS.includes(b.rank) ? b.rank : 'Soldier',
+                    reportsTo: boss ? boss.id : null, details: clip(b.details, FAM_LIMITS.details), show: { crime: false, market: false } });
+                return;
+            }
+            case 'gmFamEditPerson': {
+                const f = fam(), p = person(f); if (!p) return 'That person has gone.';
+                const name = clip(b.name, FAM_LIMITS.name);
+                if (name) { const rec = shared.recIndex.get(nameKey(name)); p.name = rec ? rec.name : name; }
+                if (RANKS.includes(b.rank)) p.rank = b.rank;
+                if (typeof b.details === 'string') p.details = clip(b.details, FAM_LIMITS.details);
+                if (b.reportsTo !== undefined) {
+                    if (!b.reportsTo) p.reportsTo = null;
+                    else {
+                        if (!f.people.some(x => x.id === b.reportsTo)) return 'Pick someone in the family.';
+                        // No loops: they can't report to themselves or to anyone under them.
+                        let up = b.reportsTo, guard = 0;
+                        while (up && guard++ < 200) { if (up === p.id) return 'That would make them their own boss.'; const x = f.people.find(y => y.id === up); up = x ? x.reportsTo : null; }
+                        p.reportsTo = b.reportsTo;
+                    }
+                }
+                return;
+            }
+            case 'gmFamRemovePerson': {
+                const f = fam(), p = person(f); if (!p) return;
+                f.people.forEach(x => { if (x.reportsTo === p.id) x.reportsTo = p.reportsTo; });   // their people move up to their boss
+                f.people = f.people.filter(x => x.id !== p.id);
+                return;
+            }
+            case 'gmFamShow': {
+                const f = fam(); if (!f) return 'That family has gone.';
+                if (!boards) return 'Pick the Judges, the Perps or both.';
+                // People are revealed one at a time (the GM's choice, 2026-11-01). The panel sends board: 'both'.
+                if (!b.personId) return 'Reveal people one at a time.';
+                const who = [person(f)].filter(Boolean);
+                if (!who.length) return 'That person has gone.';
+                const on = b.on === true;
+                boards.forEach(k => {
+                    const newly = who.filter(p => on && !p.show[k]);
+                    who.forEach(p => { p.show[k] = on; });
+                    if (newly.length) shared.boards.filter(x => x.key === k).forEach(x => x.announce(newly.length === 1
+                        ? 'New intel on the ' + f.name + ' family: ' + newly[0].name + ' (' + newly[0].rank + ').'
+                        : 'New intel: the ' + f.name + ' family (' + newly.length + ' people).'));
+                });
+                return;
+            }
+        }
+        return 'Unknown change.';
+    }
+    // Families belong to both boards, so a change bumps both (players poll by board revision).
+    function scheduleFamilies() {
+        const owner = shared.boards.find(x => x.key === 'crime');
+        if (owner) owner.saveFamilies();
+        shared.boards.forEach(x => x.touch());
+    }
 
     // GM tools. Returns an error message, or nothing when the change was made.
     function gmOp(b, id) {
@@ -814,6 +962,32 @@ function mountBoard(app, deps, cfg) {
                 return;
             }
             case 'gmAllowPlayer': { delete board.blocked[b.uid]; return; }
+
+            // ----- hidden cards -----
+            // Show or hide anything on the board: a card, an arrow or a note (kind: card | link | note).
+            case 'gmCardShow': case 'gmShowThing': {
+                const kind = b.op === 'gmCardShow' ? 'card' : String(b.kind || '');
+                const list = { card: board.items, link: board.links, note: board.notes }[kind];
+                if (!list) return 'Unknown thing to show.';
+                const x = list.find(y => y.id === b.id); if (!x) return 'That has gone.';
+                if (b.on !== true) { x.hidden = true; return; }
+                if (!x.hidden) return;
+                delete x.hidden;
+                const nm = iid => { const i = board.items.find(y => y.id === iid); return i ? i.name : '?'; };
+                if (kind === 'card') event('New on the board: ' + x.name + '.');
+                if (kind === 'link') event('New connection: ' + nm(x.from) + ' → ' + nm(x.to) + (x.label ? ' (' + x.label + ')' : '') + '.');
+                if (kind === 'note') event('New note on ' + nm(x.itemId) + '.');
+                return;
+            }
+
+            // ----- crime families (shared by both boards) -----
+            case 'gmFamAdd': case 'gmFamEdit': case 'gmFamDelete': case 'gmFamAddPerson': case 'gmFamEditPerson':
+            case 'gmFamRemovePerson': case 'gmFamShow': {
+                const err = famOp(b);
+                if (err) return err;
+                scheduleFamilies();
+                return;
+            }
             case 'gmShow': {
                 const f = resolveFocus(b.target);
                 if (!f) return 'Nothing on the board matches that.';
@@ -826,7 +1000,10 @@ function mountBoard(app, deps, cfg) {
         }
     }
 
-    shared.boards.push({ syncLeads, saveNow });
+    shared.boards.push({ key: cfg.key, syncLeads, saveNow,
+        touch: () => { if (board) changed(); },
+        announce: text => { if (board) event(text); },
+        saveFamilies: () => scheduleSave('families') });
     load();
 }
 
